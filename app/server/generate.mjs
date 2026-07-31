@@ -54,35 +54,28 @@ function decodeDataUrl(dataUrl) {
   return { mime: match[1], buffer: Buffer.from(match[3], 'base64') };
 }
 
-export async function generateHandler(req, res) {
-  if (req.method !== 'POST') {
-    send(res, 405, { error: 'Use POST.' });
-    return;
-  }
-
+/**
+ * Core generation step, transport-agnostic so it can be driven by both the
+ * Node server (`server/index.mjs`, the Vite dev plugin) and the Vercel
+ * serverless function in `api/generate.mjs`.
+ *
+ * Resolves `{ status, body }` rather than writing to a response, because
+ * Vercel pre-parses request bodies and its response object differs from a
+ * bare ServerResponse.
+ */
+export async function generateFromPayload(payload) {
   const key = process.env.OPENAI_API_KEY;
   if (!key) {
-    send(res, 503, { error: 'No OPENAI_API_KEY configured on the server.' });
-    return;
+    return { status: 503, body: { error: 'No OPENAI_API_KEY configured on the server.' } };
   }
 
-  let payload;
-  try {
-    payload = JSON.parse(await readBody(req));
-  } catch {
-    send(res, 400, { error: 'Expected a JSON body.' });
-    return;
-  }
-
-  const image = decodeDataUrl(payload.image);
+  const image = decodeDataUrl(payload?.image);
   if (!image) {
-    send(res, 400, { error: 'Expected `image` as a base64 PNG, JPEG or WebP data URL.' });
-    return;
+    return { status: 400, body: { error: 'Expected `image` as a base64 PNG, JPEG or WebP data URL.' } };
   }
   const instructions = Array.isArray(payload.instructions) ? payload.instructions.filter((l) => typeof l === 'string' && l.trim()) : [];
   if (!instructions.length) {
-    send(res, 400, { error: 'Expected at least one product change in `instructions`.' });
-    return;
+    return { status: 400, body: { error: 'Expected at least one product change in `instructions`.' } };
   }
 
   const form = new FormData();
@@ -92,8 +85,13 @@ export async function generateHandler(req, res) {
   form.append('n', '1');
   form.append('image', new Blob([image.buffer], { type: image.mime }), `photo.${image.mime === 'image/jpeg' ? 'jpg' : image.mime.slice(6)}`);
 
+  // Give up just before the platform would kill us, so the client gets a JSON
+  // error it can render instead of an opaque gateway timeout. GENERATE_TIMEOUT_MS
+  // is set from vercel.json's maxDuration on serverless; locally there is no
+  // ceiling, so the original 180s applies.
+  const budget = Number(process.env.GENERATE_TIMEOUT_MS) || 180_000;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 180_000);
+  const timeout = setTimeout(() => controller.abort(), budget);
   try {
     const upstream = await fetch(OPENAI_URL, {
       method: 'POST',
@@ -106,23 +104,42 @@ export async function generateHandler(req, res) {
     try {
       result = JSON.parse(raw);
     } catch {
-      send(res, 502, { error: `the image API returned an unreadable ${upstream.status} response` });
-      return;
+      return { status: 502, body: { error: `the image API returned an unreadable ${upstream.status} response` } };
     }
     if (!upstream.ok) {
-      send(res, 502, { error: result?.error?.message || `the image API returned ${upstream.status}` });
-      return;
+      return { status: 502, body: { error: result?.error?.message || `the image API returned ${upstream.status}` } };
     }
     const b64 = result?.data?.[0]?.b64_json;
     if (!b64) {
-      send(res, 502, { error: 'Image API returned no image data.' });
-      return;
+      return { status: 502, body: { error: 'Image API returned no image data.' } };
     }
-    send(res, 200, { image: `data:image/png;base64,${b64}` });
+    return { status: 200, body: { image: `data:image/png;base64,${b64}` } };
   } catch (err) {
     const aborted = err?.name === 'AbortError';
-    send(res, 504, { error: aborted ? 'The image API took too long to respond.' : String(err?.message || err) });
+    return {
+      status: 504,
+      body: { error: aborted ? 'The image API took too long to respond.' : String(err?.message || err) },
+    };
   } finally {
     clearTimeout(timeout);
   }
+}
+
+/** Node `(req, res)` adapter — used by server/index.mjs and the Vite dev plugin. */
+export async function generateHandler(req, res) {
+  if (req.method !== 'POST') {
+    send(res, 405, { error: 'Use POST.' });
+    return;
+  }
+
+  let payload;
+  try {
+    payload = JSON.parse(await readBody(req));
+  } catch {
+    send(res, 400, { error: 'Expected a JSON body.' });
+    return;
+  }
+
+  const { status, body } = await generateFromPayload(payload);
+  send(res, status, body);
 }
