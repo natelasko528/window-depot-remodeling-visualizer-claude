@@ -13,6 +13,8 @@ export interface DetectResult {
   body: { surfaces: DetectedSurface[] } | { error: string };
 }
 
+export declare function schemaFor(categories: string[]): Record<string, unknown>;
+
 export declare function detectFromPayload(payload: unknown): Promise<DetectResult>;
 
 export declare function detectHandler(req: IncomingMessage, res: ServerResponse): Promise<void>;

@@ -3,19 +3,6 @@ export const INK = '#1d2d3d';
 export const PAPER = '#f2f2f3';
 export const GRAIN = 'repeating-linear-gradient(180deg, rgba(0,0,0,.06) 0 1px, transparent 1px 7px)';
 
-export type Category = { name: string; zone: string; brands: string };
-
-export const CATS: Category[] = [
-  { name: 'Windows', zone: 'Exterior', brands: 'ProVia Endure · Aspect · Aeris' },
-  { name: 'Roofing', zone: 'Exterior', brands: 'CertainTeed Landmark · Grand Manor' },
-  { name: 'Siding', zone: 'Exterior', brands: 'ASCEND composite · CertainTeed vinyl' },
-  { name: 'Entry doors', zone: 'Exterior', brands: 'ProVia Signet · Heritage · Legacy' },
-  { name: 'Patio doors', zone: 'Exterior', brands: 'ProVia Endure sliding · Aeris hinged' },
-  { name: 'Gutters, soffit & fascia', zone: 'Exterior', brands: 'Seamless aluminum · leaf guard' },
-  { name: 'Bathrooms', zone: 'Interior', brands: 'Samuel Mueller solid surface' },
-  { name: 'Flooring', zone: 'Interior', brands: 'Luxury vinyl plank · tile' },
-];
-
 
 
 export type ProductLine = { name: string; note: string; tier: string };
@@ -185,5 +172,4 @@ export const LIBRARY = [
 
 
 
-export const TOOLS = ['Select', 'Auto detect', 'Brush', 'Erase'];
 export const STEP_LABELS = ['Customer', 'Photos', 'Areas', 'Design', 'Summary'];

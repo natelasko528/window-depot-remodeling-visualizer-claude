@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { GEN_STAGES, PANEL } from './data';
+import { PANEL } from './data';
 import { generateVisualization } from './api';
 import { blobToDataUrl, polygonMask } from './lib/image';
 import { getBlob } from './lib/db';
@@ -7,7 +7,7 @@ import type { SessionActions, SessionData } from './session';
 import type { Detection } from './lib/types';
 
 export type Screen =
-  | 'home' | 'customers' | 'setup' | 'photos' | 'areas'
+  | 'home' | 'customers' | 'photos' | 'areas'
   | 'visualizer' | 'compare' | 'selections' | 'summary' | 'library';
 
 export type CompareMode = 'original' | 'slider' | 'side';
@@ -21,11 +21,11 @@ type Snapshot = { category: string; line: string; color: string }[];
  */
 export type State = {
   screen: Screen;
-  cats: string[];
-  tool: string;
   panelTab: string;
   activeVersionId: string | null;
   genStage: number;
+  /** Live stage labels for the current run, one per category pass. */
+  stages: string[];
   generating: boolean;
   detecting: boolean;
   compare: CompareMode;
@@ -40,11 +40,10 @@ export type State = {
 
 const INITIAL: State = {
   screen: 'home',
-  cats: ['Roofing', 'Siding', 'Patio doors'],
-  tool: 'Select',
   panelTab: 'Siding',
   activeVersionId: null,
   genStage: -1,
+  stages: [],
   generating: false,
   detecting: false,
   compare: 'slider',
@@ -71,27 +70,61 @@ export function resolveSelection(session: SessionData, category: string) {
 }
 
 /**
- * Turns the confirmed surfaces into the sentences the image model is given.
- *
- * Driven by real detections on the active photo rather than a fixed list, so
- * the prompt names the surfaces that genuinely exist in this photograph.
+ * Render order: the biggest background surfaces first, so smaller edits land on
+ * a settled backdrop rather than being partly overwritten by the wall behind
+ * them. Anything not listed renders last, in catalogue order.
  */
-export function buildInstructions(session: SessionData): string[] {
-  const byCategory = new Map<string, string[]>();
+const RENDER_ORDER = ['Roofing', 'Siding', 'Gutters, soffit & fascia', 'Windows', 'Entry doors', 'Patio doors'];
+
+export type RenderPass = {
+  category: string;
+  detections: Detection[];
+  instruction: string;
+};
+
+/** The sentence describing one category's change, naming where it applies. */
+export function instructionFor(session: SessionData, category: string, detections: Detection[]): string {
+  const spec = PANEL[category];
+  const { line, color } = resolveSelection(session, category);
+  const product = line.startsWith(spec.brand) ? line : `${spec.brand} ${line}`;
+  const detail = spec.options.map((o) => `${o.label}: ${o.value}`).join('; ');
+  const places = detections.map((d) => d.label.toLowerCase()).join(' and ');
+  return `${category} on the ${places} — ${product} in ${color} (${detail}).`;
+}
+
+/**
+ * Groups the confirmed surfaces into one pass per product category.
+ *
+ * Each pass is rendered separately against a mask of only its own polygons,
+ * which is what stops a siding colour from creeping onto the roof. Categories
+ * with no catalogue entry are dropped here rather than silently ignored later.
+ */
+export function planPasses(session: SessionData): RenderPass[] {
+  const byCategory = new Map<string, Detection[]>();
   for (const detection of session.detections) {
     if (!detection.selected || !PANEL[detection.category]) continue;
+    if (!detection.polygon.length) continue;
     const list = byCategory.get(detection.category) ?? [];
-    list.push(detection.label.toLowerCase());
+    list.push(detection);
     byCategory.set(detection.category, list);
   }
 
-  return [...byCategory].map(([category, places]) => {
-    const spec = PANEL[category];
-    const { line, color } = resolveSelection(session, category);
-    const product = line.startsWith(spec.brand) ? line : `${spec.brand} ${line}`;
-    const detail = spec.options.map((o) => `${o.label}: ${o.value}`).join('; ');
-    return `${category} on the ${places.join(' and ')} — ${product} in ${color} (${detail}).`;
-  });
+  return [...byCategory]
+    .sort(([a], [b]) => {
+      const ai = RENDER_ORDER.indexOf(a);
+      const bi = RENDER_ORDER.indexOf(b);
+      return (ai === -1 ? RENDER_ORDER.length : ai) - (bi === -1 ? RENDER_ORDER.length : bi);
+    })
+    .map(([category, detections]) => ({
+      category,
+      detections,
+      instruction: instructionFor(session, category, detections),
+    }));
+}
+
+/** Flat instruction list — used by the PDF and the version record. */
+export function buildInstructions(session: SessionData): string[] {
+  return planPasses(session).map((pass) => pass.instruction);
 }
 
 export function useVisualizer(session: SessionData, sessionActions: SessionActions) {
@@ -143,13 +176,18 @@ export function useVisualizer(session: SessionData, sessionActions: SessionActio
   }, []);
 
   /**
-   * Renders the current selections against the active photo.
+   * Renders the confirmed selections against the active photo, one masked pass
+   * per product category.
    *
-   * `maskFor` limits the edit to specific surfaces — used by "revert area" and
-   * by per-area re-renders. Omitted, the whole photo is offered to the model
-   * and the prompt alone constrains what changes.
+   * Sequential rather than one combined call because the image API takes a
+   * single mask: rendering each category against a mask of only its own
+   * polygons is what keeps a siding colour off the roof. Each pass feeds its
+   * result to the next, and each is its own request — which also keeps every
+   * call inside the serverless function's 60s ceiling.
+   *
+   * `only` restricts the run to specific categories, used by per-area re-render.
    */
-  const runGen = useCallback(async (versionName: string, maskFor?: Detection[]) => {
+  const runGen = useCallback(async (versionName: string, only?: string[]) => {
     const current = sessionRef.current;
     const photo = current.photos.find((p) => p.id === current.activePhotoId);
 
@@ -157,52 +195,82 @@ export function useVisualizer(session: SessionData, sessionActions: SessionActio
       flash('Take or choose a photo first — there is nothing to render.');
       return;
     }
-    const instructions = buildInstructions(current);
-    if (!instructions.length) {
+
+    const all = planPasses(current);
+    const passes = only?.length ? all.filter((p) => only.includes(p.category)) : all;
+    if (!passes.length) {
       flash('Confirm at least one area on the photo before rendering.');
       return;
     }
 
     stopGeneration();
-    patch({ generating: true, genStage: 0 });
+    patch({ generating: true, genStage: 0, stages: passes.map((p) => `Applying ${p.category.toLowerCase()}`) });
 
     const controller = new AbortController();
     abort.current = controller;
 
+    // Whatever has rendered so far. On a mid-sequence failure this is still a
+    // real improvement on the original photo, so it is saved rather than lost.
+    let base: Blob | null = null;
+    const applied: string[] = [];
+    let failure = '';
+
     try {
-      const blob = await getBlob(photo.storagePath);
-      if (!blob) throw new Error('That photo is no longer on this tablet.');
+      const source = await getBlob(photo.storagePath);
+      if (!source) throw new Error('That photo is no longer on this tablet.');
+      base = source;
 
-      patch({ genStage: 1 });
-      const image = await blobToDataUrl(blob);
+      for (const [index, pass] of passes.entries()) {
+        if (controller.signal.aborted) return;
+        patch({ genStage: index });
 
-      let mask: string | undefined;
-      if (maskFor?.length) {
-        patch({ genStage: 2 });
-        const maskBlob = await polygonMask(photo.width, photo.height, maskFor.map((d) => d.polygon));
-        mask = await blobToDataUrl(maskBlob);
+        const maskBlob = await polygonMask(
+          photo.width,
+          photo.height,
+          pass.detections.map((d) => d.polygon),
+        );
+
+        try {
+          const result = await generateVisualization(
+            await blobToDataUrl(base),
+            [pass.instruction],
+            controller.signal,
+            await blobToDataUrl(maskBlob),
+          );
+          if (controller.signal.aborted) return;
+          base = await (await fetch(result)).blob();
+          applied.push(pass.category);
+        } catch (err) {
+          if (controller.signal.aborted) return;
+          failure = err instanceof Error ? err.message : String(err);
+          break;
+        }
       }
 
-      patch({ genStage: 3 });
-      const result = await generateVisualization(image, instructions, controller.signal, mask);
-      if (controller.signal.aborted) return;
+      if (!applied.length) {
+        patch({ generating: false, genStage: -1 });
+        flash(failure || 'The render failed.');
+        return;
+      }
 
-      patch({ genStage: GEN_STAGES.length - 1 });
-      const rendered = await (await fetch(result)).blob();
-
-      const summary = [...new Set(current.detections.filter((d) => d.selected).map((d) => d.category))]
+      const meta = applied
         .map((category) => resolveSelection(current, category).color)
+        .filter(Boolean)
         .join(' / ');
 
       const version = await sessionActions.addVersion({
         name: versionName,
-        meta: summary || 'Custom selection',
-        instructions,
-        blob: rendered,
+        meta: meta || applied.join(', '),
+        instructions: passes.filter((p) => applied.includes(p.category)).map((p) => p.instruction),
+        blob: base!,
       });
 
       patch({ generating: false, genStage: -1, activeVersionId: version.id });
-      flash(`${versionName} saved to this project.`);
+      flash(
+        failure
+          ? `Saved with ${applied.join(', ').toLowerCase()} applied — ${passes.length - applied.length} step(s) failed: ${failure}`
+          : `${versionName} saved to this project.`,
+      );
     } catch (err) {
       if (controller.signal.aborted) return;
       patch({ generating: false, genStage: -1 });
@@ -317,10 +385,6 @@ export function useVisualizer(session: SessionData, sessionActions: SessionActio
     redo,
     canUndo: () => history.current.past.length > 0,
     canRedo: () => history.current.future.length > 0,
-    toggleCategory: (name: string) => setState((prev) => ({
-      ...prev,
-      cats: prev.cats.includes(name) ? prev.cats.filter((c) => c !== name) : prev.cats.concat([name]),
-    })),
     pickLine: (category: string, line: string) => {
       record();
       void sessionActions.saveSelection(category, { line });

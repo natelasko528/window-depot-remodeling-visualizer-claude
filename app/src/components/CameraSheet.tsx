@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useDialog } from '../lib/useDialog';
 import { INK, PAPER } from '../data';
 
 /**
@@ -21,6 +22,7 @@ export function CameraSheet({
   const streamRef = useRef<MediaStream | null>(null);
   const [error, setError] = useState('');
   const [ready, setReady] = useState(false);
+  const dialogRef = useDialog<HTMLDivElement>(onClose);
 
   useEffect(() => {
     let cancelled = false;
@@ -67,7 +69,7 @@ export function CameraSheet({
   };
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(29,45,61,.96)', display: 'flex', flexDirection: 'column' }}>
+    <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Take a photo" tabIndex={-1} style={{ position: 'fixed', inset: 0, zIndex: 90, background: 'rgba(29,45,61,.96)', display: 'flex', flexDirection: 'column' }}>
       <div style={{ flex: 'none', display: 'flex', alignItems: 'center', gap: 12, padding: '14px 20px', color: PAPER, borderBottom: '1px solid rgba(242,242,243,.18)' }}>
         <span style={{ fontFamily: 'var(--font-heading)', fontSize: 20 }}>Take a photo of the elevation</span>
         <button onClick={onClose} className="btn" style={{ marginLeft: 'auto', height: 46, padding: '0 18px', background: 'rgba(242,242,243,.1)', border: '1px solid rgba(242,242,243,.3)', color: PAPER }}>

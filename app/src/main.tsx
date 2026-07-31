@@ -4,6 +4,7 @@ import './styles/fonts.css';
 import './styles/ds-industry.css';
 import './styles/app.css';
 import { App } from './App';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { startSync } from './lib/sync';
 
 // Starts the outbox drain and the online/offline listeners for the session.
@@ -19,6 +20,8 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator) {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
   </StrictMode>,
 );

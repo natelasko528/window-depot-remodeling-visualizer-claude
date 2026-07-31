@@ -6,15 +6,54 @@
  * "fixes" a sideways house, and full-resolution uploads are slow on a cell
  * connection in someone's driveway.
  *
- * Downscaling to a 2048px long edge keeps far more detail than the render
- * pipeline consumes (gpt-image-1 tops out at 1536x1024) while cutting a
- * typical capture to a few hundred KB.
+ * Photos are normalised to one of the image API's supported output sizes at
+ * capture. That single decision is what makes per-category masking possible:
+ * base image, mask and rendered result then share one coordinate system for
+ * every pass. Without it, pass two's mask would neither match the result's
+ * dimensions nor line up with surfaces the API had re-framed to its own aspect.
  */
 
-const MAX_EDGE = 2048;
+/** Sizes gpt-image-1 will return. Anything else comes back re-framed. */
+const RENDER_SIZES = [
+  { width: 1024, height: 1024 },
+  { width: 1536, height: 1024 },
+  { width: 1024, height: 1536 },
+] as const;
+
 const JPEG_QUALITY = 0.86;
 
+export type RenderSize = { width: number; height: number };
 export type PreparedPhoto = { blob: Blob; width: number; height: number };
+
+/** The supported size whose aspect ratio is closest to the source. */
+export function nearestRenderSize(width: number, height: number): RenderSize {
+  const aspect = width / height;
+  return RENDER_SIZES.reduce((best, size) => {
+    const delta = Math.abs(size.width / size.height - aspect);
+    const bestDelta = Math.abs(best.width / best.height - aspect);
+    return delta < bestDelta ? size : best;
+  }, RENDER_SIZES[0]);
+}
+
+/**
+ * Geometry for a cover-crop: fill the target box entirely, centring whatever
+ * overflows. Cropping rather than letterboxing keeps the frame free of bars the
+ * model would otherwise try to interpret as part of the building.
+ */
+export function coverCrop(
+  source: RenderSize,
+  target: RenderSize,
+): { sx: number; sy: number; sWidth: number; sHeight: number } {
+  const scale = Math.max(target.width / source.width, target.height / source.height);
+  const sWidth = target.width / scale;
+  const sHeight = target.height / scale;
+  return {
+    sx: (source.width - sWidth) / 2,
+    sy: (source.height - sHeight) / 2,
+    sWidth,
+    sHeight,
+  };
+}
 
 /**
  * `imageOrientation: 'from-image'` applies the EXIF rotation during decode, so
@@ -31,23 +70,26 @@ async function decode(file: Blob): Promise<ImageBitmap> {
 
 export async function preparePhoto(file: Blob): Promise<PreparedPhoto> {
   const bitmap = await decode(file);
-  const scale = Math.min(1, MAX_EDGE / Math.max(bitmap.width, bitmap.height));
-  const width = Math.round(bitmap.width * scale);
-  const height = Math.round(bitmap.height * scale);
+  const target = nearestRenderSize(bitmap.width, bitmap.height);
+  const crop = coverCrop({ width: bitmap.width, height: bitmap.height }, target);
 
   const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
+  canvas.width = target.width;
+  canvas.height = target.height;
   const ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Could not get a 2D canvas context.');
-  ctx.drawImage(bitmap, 0, 0, width, height);
+  ctx.drawImage(
+    bitmap,
+    crop.sx, crop.sy, crop.sWidth, crop.sHeight,
+    0, 0, target.width, target.height,
+  );
   bitmap.close();
 
   const blob = await new Promise<Blob | null>((resolve) =>
     canvas.toBlob(resolve, 'image/jpeg', JPEG_QUALITY),
   );
   if (!blob) throw new Error('Could not encode the photo.');
-  return { blob, width, height };
+  return { blob, width: target.width, height: target.height };
 }
 
 /**

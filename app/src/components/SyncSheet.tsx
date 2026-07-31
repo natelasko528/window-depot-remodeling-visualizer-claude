@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { drain, getStatus, subscribe, type SyncStatus } from '../lib/sync';
+import { useDialog } from '../lib/useDialog';
 import { isConfigured } from '../lib/supabase';
 import type { SessionData } from '../session';
 import type { Actions } from '../store';
@@ -20,6 +21,8 @@ function relative(ts: number | null): string {
 
 export function SyncSheet({ session, actions }: { session: SessionData; actions: Actions }) {
   const status = useSyncStatus();
+  const close = useCallback(() => actions.patch({ sheet: false }), [actions]);
+  const dialogRef = useDialog<HTMLDivElement>(close);
 
   const headline = !isConfigured
     ? 'Saved on this tablet'
@@ -60,7 +63,7 @@ export function SyncSheet({ session, actions }: { session: SessionData; actions:
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(29,45,61,.45)', zIndex: 50, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}>
-      <div style={{ width: '100%', maxWidth: 780, background: 'var(--color-bg)', border: '1px solid var(--color-divider)', borderBottom: 0, padding: '22px 24px 24px' }}>
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-label="Connection and sync" tabIndex={-1} style={{ width: '100%', maxWidth: 780, background: 'var(--color-bg)', border: '1px solid var(--color-divider)', borderBottom: 0, padding: '22px 24px 24px' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16 }}>
           <div>
             <div style={{ fontSize: 11.5, letterSpacing: '.2em', textTransform: 'uppercase', color: 'var(--color-neutral-600)' }}>Connection</div>
@@ -71,7 +74,7 @@ export function SyncSheet({ session, actions }: { session: SessionData; actions:
               {status.lastError ? ` · last error: ${status.lastError}` : ''}
             </p>
           </div>
-          <button onClick={() => actions.patch({ sheet: false })} className="btn btn-ghost" style={{ height: 46, padding: '0 14px' }}>Close</button>
+          <button onClick={close} className="btn btn-ghost" style={{ height: 46, padding: '0 14px' }}>Close</button>
         </div>
 
         <div style={{ display: 'grid', gap: 8, margin: '16px 0 18px' }}>

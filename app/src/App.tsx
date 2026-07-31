@@ -8,7 +8,6 @@ import { Home } from './screens/Home';
 import { Library } from './screens/Library';
 import { Photos } from './screens/Photos';
 import { Selections } from './screens/Selections';
-import { Setup } from './screens/Setup';
 import { Summary } from './screens/Summary';
 import { Visualizer } from './screens/Visualizer';
 import { useSession } from './session';
@@ -25,7 +24,6 @@ export function App() {
       <main style={{ flex: 1, minHeight: 0, position: 'relative', overflow: 'hidden' }}>
         {state.screen === 'home' && <Home session={session} sessionActions={sessionActions} actions={actions} />}
         {state.screen === 'customers' && <Customers session={session} sessionActions={sessionActions} actions={actions} />}
-        {state.screen === 'setup' && <Setup state={state} actions={actions} />}
         {state.screen === 'photos' && <Photos session={session} sessionActions={sessionActions} actions={actions} />}
         {state.screen === 'areas' && <Areas state={state} session={session} sessionActions={sessionActions} actions={actions} />}
         {state.screen === 'visualizer' && <Visualizer state={state} session={session} sessionActions={sessionActions} actions={actions} panelKey={activePanelKey} />}

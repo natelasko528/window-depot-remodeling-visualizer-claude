@@ -18,57 +18,54 @@ try {
  * render size, on any photo, at any device pixel ratio.
  */
 
-// Kept in step with the PANEL catalogue in src/data.ts — a category the app has
-// no products for would produce an area the rep cannot actually price.
-const CATEGORIES = [
-  'Roofing',
-  'Siding',
-  'Windows',
-  'Entry doors',
-  'Patio doors',
-  'Gutters, soffit & fascia',
-];
-
-const SCHEMA = {
-  type: 'object',
-  properties: {
-    surfaces: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          category: { type: 'string', enum: CATEGORIES },
-          label: {
-            type: 'string',
-            description: 'Short human name a salesperson would say out loud, e.g. "Rear wall siding" or "Garage roof plane".',
-          },
-          polygon: {
-            type: 'array',
-            description: 'Outline in normalised image coordinates, 0..1, clockwise. 4-12 points.',
-            items: {
-              type: 'object',
-              properties: {
-                x: { type: 'number' },
-                y: { type: 'number' },
-              },
-              required: ['x', 'y'],
-              additionalProperties: false,
+/**
+ * The client sends its own catalogue keys, so detection can never offer a
+ * surface the app has no products for. A duplicated list here drifted from
+ * PANEL and let Claude return "Entry doors", which the rep could confirm and
+ * which then contributed nothing to the render.
+ */
+export function schemaFor(categories) {
+  return {
+    type: 'object',
+    properties: {
+      surfaces: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            category: { type: 'string', enum: categories },
+            label: {
+              type: 'string',
+              description: 'Short human name a salesperson would say out loud, e.g. "Rear wall siding" or "Garage roof plane".',
             },
+            polygon: {
+              type: 'array',
+              description: 'Outline in normalised image coordinates, 0..1, clockwise. 4-12 points.',
+              items: {
+                type: 'object',
+                properties: {
+                  x: { type: 'number' },
+                  y: { type: 'number' },
+                },
+                required: ['x', 'y'],
+                additionalProperties: false,
+              },
+            },
+            approx_sqft: {
+              type: ['number', 'null'],
+              description: 'Rough area in square feet if it can be estimated from the photo, otherwise null.',
+            },
+            confidence: { type: 'number', description: '0..1' },
           },
-          approx_sqft: {
-            type: ['number', 'null'],
-            description: 'Rough area in square feet if it can be estimated from the photo, otherwise null.',
-          },
-          confidence: { type: 'number', description: '0..1' },
+          required: ['category', 'label', 'polygon', 'approx_sqft', 'confidence'],
+          additionalProperties: false,
         },
-        required: ['category', 'label', 'polygon', 'approx_sqft', 'confidence'],
-        additionalProperties: false,
       },
     },
-  },
-  required: ['surfaces'],
-  additionalProperties: false,
-};
+    required: ['surfaces'],
+    additionalProperties: false,
+  };
+}
 
 const PROMPT = [
   'This is a photograph of a house taken at a home-improvement sales appointment.',
@@ -117,6 +114,13 @@ export async function detectFromPayload(payload) {
     return { status: 400, body: { error: 'Expected `image` as a base64 PNG, JPEG, WebP or GIF data URL.' } };
   }
 
+  const categories = Array.isArray(payload?.categories)
+    ? [...new Set(payload.categories.filter((c) => typeof c === 'string' && c.trim()))]
+    : [];
+  if (!categories.length) {
+    return { status: 400, body: { error: 'Expected `categories` — the product categories detection may return.' } };
+  }
+
   const key = process.env.ANTHROPIC_API_KEY;
   if (!key) {
     return { status: 503, body: { error: 'No ANTHROPIC_API_KEY configured on the server.' } };
@@ -130,7 +134,7 @@ export async function detectFromPayload(payload) {
       // Thinking is on by default on Opus 5 and shares this budget with the
       // response, so this is sized well above the JSON itself.
       max_tokens: 8000,
-      output_config: { format: { type: 'json_schema', schema: SCHEMA } },
+      output_config: { format: { type: 'json_schema', schema: schemaFor(categories) } },
       messages: [
         {
           role: 'user',
@@ -175,7 +179,7 @@ export async function detectFromPayload(payload) {
         approxSqft: typeof s.approx_sqft === 'number' ? s.approx_sqft : null,
         confidence: typeof s.confidence === 'number' ? clamp01(s.confidence) : null,
       }))
-      .filter((s) => CATEGORIES.includes(s.category) && s.polygon.length >= 3);
+      .filter((s) => categories.includes(s.category) && s.polygon.length >= 3);
 
     return { status: 200, body: { surfaces } };
   } catch (err) {

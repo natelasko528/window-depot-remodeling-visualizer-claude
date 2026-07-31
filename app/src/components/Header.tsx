@@ -5,12 +5,12 @@ import type { SessionData } from '../session';
 import type { Actions, Screen, State } from '../store';
 
 const STEP_INDEX: Partial<Record<Screen, number>> = {
-  customers: 0, setup: 1, photos: 1, areas: 2, visualizer: 3, compare: 3, selections: 4, summary: 4,
+  customers: 0, photos: 1, areas: 2, visualizer: 3, compare: 3, selections: 4, summary: 4,
 };
 
 const STEP_TARGET: Screen[] = ['customers', 'photos', 'areas', 'visualizer', 'selections'];
 
-const IN_PROJECT: Screen[] = ['customers', 'setup', 'photos', 'areas', 'visualizer', 'compare', 'selections', 'summary'];
+const IN_PROJECT: Screen[] = ['customers', 'photos', 'areas', 'visualizer', 'compare', 'selections', 'summary'];
 
 export function Header({
   state,

@@ -150,6 +150,14 @@ export function useSession() {
     patch({ detections: rows });
   }, [patch]);
 
+  const addDetection = useCallback(async (item: Omit<Detection, 'id' | 'photoId'>) => {
+    const photoId = dataRef.current.activePhotoId;
+    if (!photoId) return;
+    const row = await repo.saveDetection({ ...item, id: crypto.randomUUID(), photoId });
+    patch({ detections: [...dataRef.current.detections, row] });
+    return row;
+  }, [patch]);
+
   const updateDetection = useCallback(async (detection: Detection) => {
     await repo.saveDetection(detection);
     patch({
@@ -203,13 +211,13 @@ export function useSession() {
     openCustomer, reloadProject, resolveUrls,
     addPhoto, setActivePhoto, deletePhoto,
     saveSelection,
-    setDetections, updateDetection, removeDetection,
+    setDetections, addDetection, updateDetection, removeDetection,
     addVersion, favoriteVersion, deleteVersion,
   }), [
     openCustomer, reloadProject, resolveUrls,
     addPhoto, setActivePhoto, deletePhoto,
     saveSelection,
-    setDetections, updateDetection, removeDetection,
+    setDetections, addDetection, updateDetection, removeDetection,
     addVersion, favoriteVersion, deleteVersion,
   ]);
 
