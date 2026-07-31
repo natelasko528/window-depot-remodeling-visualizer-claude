@@ -1,11 +1,7 @@
-export const BEFORE = '/assets/rear-elevation-before.jpg';
-export const AFTER = '/assets/rear-elevation-after.png';
-
 export const STEEL = '#5980a6';
 export const INK = '#1d2d3d';
 export const PAPER = '#f2f2f3';
 export const GRAIN = 'repeating-linear-gradient(180deg, rgba(0,0,0,.06) 0 1px, transparent 1px 7px)';
-export const OPTION_B_FILTER = 'sepia(.24) saturate(1.3) brightness(.99)';
 
 export type Category = { name: string; zone: string; brands: string };
 
@@ -20,26 +16,7 @@ export const CATS: Category[] = [
   { name: 'Flooring', zone: 'Interior', brands: 'Luxury vinyl plank · tile' },
 ];
 
-export type Area = {
-  id: string;
-  name: string;
-  cat: string;
-  meta: string;
-  x: string;
-  y: string;
-  w: string;
-  h: string;
-};
 
-export const AREAS: Area[] = [
-  { id: 'roof-awning', name: 'Patio roof', cat: 'Roofing', meta: 'Auto-detected · 118 sq ft', x: '31%', y: '16%', w: '51%', h: '13%' },
-  { id: 'roof-main', name: 'Garage roof plane', cat: 'Roofing', meta: 'Auto-detected · 640 sq ft', x: '0%', y: '17%', w: '32%', h: '23%' },
-  { id: 'siding-right', name: 'Rear wall siding', cat: 'Siding', meta: 'Auto-detected · 1,240 sq ft', x: '64%', y: '27%', w: '36%', h: '50%' },
-  { id: 'siding-upper', name: 'Second story siding', cat: 'Siding', meta: 'Auto-detected · 900 sq ft', x: '20%', y: '0%', w: '80%', h: '16%' },
-  { id: 'door-patio', name: 'Patio door', cat: 'Patio doors', meta: 'Auto-detected · 6 ft slider', x: '42%', y: '28%', w: '21%', h: '40%' },
-  { id: 'windows-lower', name: 'Garage windows (2)', cat: 'Windows', meta: 'Auto-detected · double hung', x: '7%', y: '40%', w: '21%', h: '19%' },
-  { id: 'gutter-awning', name: 'Gutter run', cat: 'Gutters, soffit & fascia', meta: 'Suggested · 34 lin ft', x: '31%', y: '27%', w: '51%', h: '4%' },
-];
 
 export type ProductLine = { name: string; note: string; tier: string };
 export type Swatch = { name: string; hex: string };
@@ -205,26 +182,8 @@ export const LIBRARY = [
   { cat: 'Gutters & protection', brand: 'Seamless aluminum', lines: '5" and 6" K-style · micro-mesh guard', cached: '11 colors cached', swatches: ['#f4f2ee', '#e2d6c0', '#4a3b31', '#25262a', '#c9b79f'] },
 ];
 
-export const RECENT_CUSTOMERS = [
-  { name: 'Nowak', city: 'Wauwatosa', meta: '2 properties' },
-  { name: 'Delacroix', city: 'Milwaukee', meta: '1 project' },
-  { name: 'Hartmann', city: 'Milwaukee', meta: 'Quote sent' },
-  { name: 'Vasquez', city: 'Brookfield', meta: 'Follow-up' },
-];
 
-export const CUSTOMERS = [
-  { name: 'Dan & Kathy Nowak', address: '12345 W. Bluemound Rd, Wauwatosa, WI 53213', phone: '(414) 555-0148', email: 'knowak@example.com', badge: "Today's 2 PM", note: 'Rear of house — old slider leaks, siding chalking. Both spouses home. Kathy decides colors.', projects: 1 },
-  { name: 'Marie Delacroix', address: '806 E Center St, Milwaukee, WI 53212', phone: '(414) 555-0912', email: 'mdela@example.com', badge: 'Repeat customer', note: 'Windows quoted in March. Wants to see an entry door on the same photos.', projects: 3 },
-  { name: 'Greg Hartmann', address: '4429 N 68th St, Milwaukee, WI 53216', phone: '(414) 555-0347', email: 'ghartmann@example.com', badge: 'Bath remodel', note: 'Tub-to-shower conversion. Needs interior room photos.', projects: 1 },
-  { name: 'Luis & Ana Vasquez', address: '17110 Cleveland Ave, Brookfield, WI 53005', phone: '(262) 555-0233', email: 'lvasquez@example.com', badge: 'New lead', note: 'Roof hail damage; insurance involved. Bring roofing samples.', projects: 0 },
-];
 
-export const PHOTO_STRIP = [
-  { label: 'Front', src: AFTER, selected: false, opacity: 0.75 },
-  { label: 'Rear · in use', src: BEFORE, selected: true, opacity: 1 },
-  { label: 'Left · dim', src: BEFORE, selected: false, opacity: 0.45 },
-  { label: 'Right', src: AFTER, selected: false, opacity: 0.75 },
-];
 
 export const TOOLS = ['Select', 'Auto detect', 'Brush', 'Erase'];
 export const STEP_LABELS = ['Customer', 'Photos', 'Areas', 'Design', 'Summary'];

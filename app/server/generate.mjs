@@ -64,11 +64,8 @@ function decodeDataUrl(dataUrl) {
  * bare ServerResponse.
  */
 export async function generateFromPayload(payload) {
-  const key = process.env.OPENAI_API_KEY;
-  if (!key) {
-    return { status: 503, body: { error: 'No OPENAI_API_KEY configured on the server.' } };
-  }
-
+  // Validate the request before checking server config, so a malformed call
+  // gets an accurate 400 rather than a 503 that blames the deployment.
   const image = decodeDataUrl(payload?.image);
   if (!image) {
     return { status: 400, body: { error: 'Expected `image` as a base64 PNG, JPEG or WebP data URL.' } };
@@ -76,6 +73,11 @@ export async function generateFromPayload(payload) {
   const instructions = Array.isArray(payload.instructions) ? payload.instructions.filter((l) => typeof l === 'string' && l.trim()) : [];
   if (!instructions.length) {
     return { status: 400, body: { error: 'Expected at least one product change in `instructions`.' } };
+  }
+
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) {
+    return { status: 503, body: { error: 'No OPENAI_API_KEY configured on the server.' } };
   }
 
   const form = new FormData();

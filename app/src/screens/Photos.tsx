@@ -1,66 +1,171 @@
+import { useRef, useState } from 'react';
 import { Corners } from '../components/Corners';
-import { BEFORE, INK, PHOTO_STRIP } from '../data';
+import { CameraSheet } from '../components/CameraSheet';
+import { INK } from '../data';
+import { preparePhoto } from '../lib/image';
+import type { SessionActions, SessionData } from '../session';
 import type { Actions } from '../store';
 
-export function Photos({ actions }: { actions: Actions }) {
+export function Photos({
+  session,
+  sessionActions,
+  actions,
+}: {
+  session: SessionData;
+  sessionActions: SessionActions;
+  actions: Actions;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [camera, setCamera] = useState(false);
+  const [busy, setBusy] = useState('');
+
+  const active = session.photos.find((p) => p.id === session.activePhotoId) ?? null;
+
+  const ingest = async (files: Blob[]) => {
+    if (!session.project) {
+      actions.flash('Pick a customer first — photos are saved against their project.');
+      return;
+    }
+    setBusy(files.length > 1 ? `Adding ${files.length} photos…` : 'Adding photo…');
+    try {
+      for (const file of files) {
+        const prepared = await preparePhoto(file);
+        await sessionActions.addPhoto(prepared.blob, {
+          width: prepared.width,
+          height: prepared.height,
+        });
+      }
+      actions.flash(files.length > 1 ? `${files.length} photos saved.` : 'Photo saved to this project.');
+    } catch (err) {
+      actions.flash(err instanceof Error ? err.message : 'That photo could not be read.');
+    } finally {
+      setBusy('');
+    }
+  };
+
   return (
-    <section style={{ height: '100%', display: 'grid', gridTemplateColumns: '1fr 344px' }}>
-      <div style={{ minWidth: 0, padding: '24px 26px', display: 'flex', flexDirection: 'column', gap: 16, overflow: 'hidden' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div>
-            <h2 style={{ margin: 0 }}>Rear elevation</h2>
-            <div style={{ fontSize: 13, color: 'var(--color-neutral-700)' }}>Photo 2 of 4 · captured 2:14 PM · daylight, straight-on — good to use</div>
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            {['Retake', 'Crop', 'Straighten', 'Brightness'].map((label) => (
-              <button key={label} onClick={actions.noop} className="btn btn-secondary" style={{ height: 48, padding: '0 16px' }}>{label}</button>
-            ))}
-          </div>
-        </div>
-        <div className="blueprint" style={{ flex: 1, minHeight: 0, background: 'var(--color-accent-900)', display: 'grid', placeItems: 'center', overflow: 'hidden' }}>
-          <Corners />
-          <img src={BEFORE} alt="Rear elevation of the home before remodeling" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
-        </div>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'stretch' }}>
-          {PHOTO_STRIP.map((p) => (
-            <button
-              key={p.label}
-              onClick={actions.noop}
-              style={{ width: 150, padding: 0, background: 'none', border: `1px solid ${p.selected ? INK : 'var(--color-divider)'}`, boxShadow: p.selected ? '0 0 0 3px rgba(89,128,166,.35)' : 'none', cursor: 'pointer', overflow: 'hidden', textAlign: 'left' }}
-            >
-              <span style={{ display: 'block', height: 82, background: 'var(--color-neutral-200)' }}>
-                <img src={p.src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', opacity: p.opacity }} />
-              </span>
-              <span style={{ display: 'block', padding: '6px 8px', fontSize: 11.5, letterSpacing: '.1em', textTransform: 'uppercase', fontFamily: 'var(--font-body)' }}>{p.label}</span>
-            </button>
-          ))}
-          <button onClick={actions.noop} style={{ width: 150, border: '1px dashed var(--color-neutral-400)', background: 'none', cursor: 'pointer', fontFamily: 'var(--font-heading)', fontSize: 17, color: 'var(--color-accent-700)' }}>+ Add elevation</button>
+    <section style={{ height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      {camera && (
+        <CameraSheet
+          onClose={() => setCamera(false)}
+          onCapture={(blob) => {
+            setCamera(false);
+            void ingest([blob]);
+          }}
+        />
+      )}
+
+      <input
+        ref={fileRef}
+        type="file"
+        accept="image/*"
+        multiple
+        hidden
+        onChange={(e) => {
+          const files = Array.from(e.target.files ?? []);
+          e.target.value = '';
+          if (files.length) void ingest(files);
+        }}
+      />
+
+      <div style={{ flex: 'none', padding: '22px 28px 12px' }}>
+        <h2 style={{ margin: '0 0 2px' }}>Photos of the home</h2>
+        <div style={{ fontSize: 13.5, color: 'var(--color-neutral-700)' }}>
+          {active
+            ? `${active.label} · ${active.width}×${active.height} · captured ${new Date(active.capturedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+            : 'No photos yet — take one of the elevation you are quoting.'}
         </div>
       </div>
-      <aside style={{ borderLeft: '1px solid var(--color-divider)', background: 'var(--color-neutral-100)', padding: '22px 22px 20px', display: 'flex', flexDirection: 'column', gap: 16, overflowY: 'auto' }}>
-        <div>
-          <div style={{ fontSize: 11.5, letterSpacing: '.2em', textTransform: 'uppercase', color: 'var(--color-neutral-600)' }}>Capture</div>
-          <div style={{ display: 'grid', gap: 10, marginTop: 10 }}>
-            <button onClick={actions.noop} className="btn btn-primary" style={{ height: 60, fontSize: 17, justifyContent: 'center' }}>Take photo</button>
-            <button onClick={actions.noop} className="btn btn-secondary" style={{ height: 52, justifyContent: 'center' }}>Upload from tablet</button>
-            <button onClick={actions.noop} className="btn btn-secondary" style={{ height: 52, justifyContent: 'center' }}>Use customer's photos (3)</button>
+
+      <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 330px', gap: 20, padding: '0 28px 22px' }}>
+        <div className="blueprint" style={{ position: 'relative', display: 'grid', placeItems: 'center', minHeight: 0, background: 'var(--color-neutral-100)', overflow: 'hidden' }}>
+          <Corners />
+          {active && session.urls[active.storagePath] ? (
+            <img
+              src={session.urls[active.storagePath]}
+              alt={active.label}
+              style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+            />
+          ) : (
+            <div style={{ textAlign: 'center', padding: 30, maxWidth: 420 }}>
+              <div style={{ fontFamily: 'var(--font-heading)', fontSize: 22, marginBottom: 6 }}>
+                {busy || 'Nothing here yet'}
+              </div>
+              <p style={{ color: 'var(--color-neutral-700)', fontSize: 14.5, margin: 0 }}>
+                Every render works from the photo you pick here, so get the whole
+                elevation in frame with the light behind you.
+              </p>
+            </div>
+          )}
+        </div>
+
+        <aside style={{ display: 'flex', flexDirection: 'column', minHeight: 0, gap: 12 }}>
+          <div style={{ display: 'grid', gap: 8 }}>
+            <button onClick={() => setCamera(true)} className="btn btn-primary" style={{ height: 56, justifyContent: 'center', fontSize: 17 }}>
+              Take photo
+            </button>
+            <button onClick={() => fileRef.current?.click()} className="btn btn-secondary" style={{ height: 50, justifyContent: 'center' }}>
+              Upload from tablet
+            </button>
           </div>
-        </div>
-        <div>
-          <div style={{ fontSize: 11.5, letterSpacing: '.2em', textTransform: 'uppercase', color: 'var(--color-neutral-600)', marginBottom: 8 }}>A good photo</div>
-          <ul style={{ margin: 0, paddingLeft: 18, fontSize: 14, lineHeight: 1.7, color: 'var(--color-neutral-800)' }}>
-            <li>Stand square to the wall</li>
-            <li>Get the whole project area in frame</li>
-            <li>Daylight, no deep shade</li>
-            <li>Move cars and hoses if you can</li>
-          </ul>
-        </div>
-        <div style={{ padding: '12px 14px', border: '1px solid var(--color-accent-300)', background: 'var(--color-accent-100)', fontSize: 13.5 }}>
-          <strong style={{ fontFamily: 'var(--font-heading)', fontSize: 16, display: 'block' }}>Left elevation is dim</strong>
-          Shot into the sun at 2:09 PM. Usable, but the siding color will read darker. Retake later or continue.
-        </div>
-        <button onClick={actions.go('areas')} className="btn btn-primary" style={{ marginTop: 'auto', height: 60, fontSize: 17, fontFamily: 'var(--font-heading)', letterSpacing: '.06em', textTransform: 'uppercase', justifyContent: 'center' }}>Use these 4 photos</button>
-      </aside>
+
+          <div style={{ fontSize: 11.5, letterSpacing: '.2em', textTransform: 'uppercase', color: 'var(--color-neutral-600)', marginTop: 4 }}>
+            This project ({session.photos.length})
+          </div>
+
+          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', display: 'grid', gap: 8, alignContent: 'start' }}>
+            {session.photos.map((photo) => {
+              const on = photo.id === session.activePhotoId;
+              const url = session.urls[photo.storagePath];
+              return (
+                <div
+                  key={photo.id}
+                  style={{ display: 'flex', gap: 10, alignItems: 'center', padding: 6, background: on ? '#fff' : 'transparent', border: `1px solid ${on ? INK : 'var(--color-divider)'}` }}
+                >
+                  <button
+                    onClick={() => void sessionActions.setActivePhoto(photo.id)}
+                    style={{ display: 'flex', gap: 10, alignItems: 'center', flex: 1, minWidth: 0, background: 'none', border: 0, padding: 0, cursor: 'pointer', textAlign: 'left', fontFamily: 'var(--font-body)' }}
+                  >
+                    <span style={{ width: 64, height: 46, flex: 'none', overflow: 'hidden', background: 'var(--color-neutral-200)' }}>
+                      {url && <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />}
+                    </span>
+                    <span style={{ minWidth: 0 }}>
+                      <span style={{ display: 'block', fontFamily: 'var(--font-heading)', fontSize: 15, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {photo.label}
+                      </span>
+                      <span style={{ display: 'block', fontSize: 12, color: 'var(--color-neutral-600)' }}>
+                        {on ? 'In use' : `${photo.width}×${photo.height}`}
+                      </span>
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => void sessionActions.deletePhoto(photo.id)}
+                    aria-label={`Delete ${photo.label}`}
+                    style={{ flex: 'none', width: 34, height: 34, cursor: 'pointer', background: 'none', border: '1px solid var(--color-divider)', fontSize: 15, lineHeight: 1 }}
+                  >
+                    ×
+                  </button>
+                </div>
+              );
+            })}
+            {!session.photos.length && (
+              <p style={{ fontSize: 13.5, color: 'var(--color-neutral-600)', margin: 0, lineHeight: 1.7 }}>
+                Photos are saved on this tablet immediately and upload when there
+                is signal.
+              </p>
+            )}
+          </div>
+
+          <button
+            onClick={actions.go('areas')}
+            disabled={!active}
+            className="btn btn-primary"
+            style={{ height: 56, justifyContent: 'center', opacity: active ? 1 : .45, fontFamily: 'var(--font-heading)', letterSpacing: '.06em', textTransform: 'uppercase' }}
+          >
+            Find the areas
+          </button>
+        </aside>
+      </div>
     </section>
   );
 }

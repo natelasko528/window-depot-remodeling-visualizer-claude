@@ -1,56 +1,107 @@
-import { BEFORE, GEN_STAGES, GRAIN, INK, PANEL, PAPER, STEEL } from '../data';
+import { useState } from 'react';
+import { Canvas } from '../components/Canvas';
+import { GEN_STAGES, GRAIN, INK, PANEL, PAPER, STEEL } from '../data';
+import * as repo from '../lib/repo';
+import { resolveSelection } from '../store';
+import type { SessionActions, SessionData } from '../session';
 import type { Actions, State } from '../store';
 
-export function Visualizer({ state, actions, panelKey }: { state: State; actions: Actions; panelKey: string }) {
+export function Visualizer({
+  state,
+  session,
+  sessionActions,
+  actions,
+  panelKey,
+}: {
+  state: State;
+  session: SessionData;
+  sessionActions: SessionActions;
+  actions: Actions;
+  panelKey: string;
+}) {
+  const [fitSignal, setFitSignal] = useState(0);
+  const [holding, setHolding] = useState(false);
+
   const spec = PANEL[panelKey];
-  const active = state.versions.find((v) => v.id === state.activeVersion);
-  const chosenLine = state.lines[panelKey] || spec.line;
-  const chosenColor = state.picks[panelKey] || spec.color;
+  const photo = session.photos.find((p) => p.id === session.activePhotoId) ?? null;
+  const before = photo ? session.urls[photo.storagePath] : null;
+  const active = session.versions.find((v) => v.id === state.activeVersionId) ?? null;
+  const after = active ? session.urls[active.storagePath] : null;
+
+  const { line: chosenLine, color: chosenColor } = resolveSelection(session, panelKey);
+  const confirmed = session.detections.filter((d) => d.selected);
+
+  // Hold-to-compare falls back to the render when there is no original loaded.
+  const shown = holding ? before ?? after : after ?? before;
+
+  const revertArea = () => {
+    const area = confirmed.find((d) => d.category === panelKey) ?? confirmed[0];
+    if (!area) {
+      actions.flash('Confirm an area first.');
+      return;
+    }
+    void actions.runGen(active ? active.name : 'Option A', [area]);
+    actions.flash(`Re-rendering just the ${area.label.toLowerCase()}…`);
+  };
+
+  const report = () => {
+    void repo.reportFeedback(active?.id ?? null, `Rep flagged ${active?.name ?? 'the original photo'} as a bad result.`);
+    actions.flash('Flagged for review. The render is still usable meanwhile.');
+  };
 
   const canvasTools = [
-    { name: 'Fit', dim: 1, act: () => actions.flash('Fit to screen. Pinch to zoom, double-tap to reset.') },
-    { name: 'Original', dim: 1, act: () => actions.flash('Hold to see the original photo underneath.') },
-    { name: 'Undo', dim: state.versions.length ? 1 : 0.4, act: () => actions.flash('Undid last color change.') },
-    { name: 'Redo', dim: 0.4, act: () => actions.flash('Nothing to redo.') },
-    { name: 'Report result', dim: 1, act: () => actions.flash('Flagged for review — the render keeps working meanwhile.') },
-  ];
-
-  const hotspots = [
-    { label: `Landmark PRO — ${state.picks.Roofing}`, x: '33%', y: '11%' },
-    { label: `ASCEND — ${state.picks.Siding}`, x: '66%', y: '52%' },
-    { label: `Endure slider — ${state.picks['Patio doors']}`, x: '40%', y: '72%' },
+    { name: 'Fit', enabled: true, act: () => { setFitSignal((n) => n + 1); actions.flash('Reset to fit. Pinch to zoom, double-tap to toggle.'); } },
+    { name: 'Undo', enabled: actions.canUndo(), act: actions.undo },
+    { name: 'Redo', enabled: actions.canRedo(), act: actions.redo },
+    { name: 'Revert area', enabled: Boolean(active && confirmed.length), act: revertArea },
+    { name: 'Report result', enabled: Boolean(active), act: report },
   ];
 
   return (
-    <section style={{ height: '100%', display: 'grid', gridTemplateColumns: '1fr 372px' }}>
+    <section style={{ height: '100%', display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 372px' }}>
       <div style={{ minWidth: 0, background: 'var(--color-accent-900)', display: 'flex', flexDirection: 'column' }}>
         <div style={{ flex: 'none', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', color: '#f2f2f3', borderBottom: '1px solid rgba(242,242,243,.12)' }}>
-          <span style={{ fontFamily: 'var(--font-heading)', fontSize: 19, letterSpacing: '.02em' }}>Rear elevation</span>
+          <span style={{ fontFamily: 'var(--font-heading)', fontSize: 19, letterSpacing: '.02em' }}>
+            {photo?.label ?? 'No photo'}
+          </span>
           <span className="tag" style={{ background: 'rgba(242,242,243,.12)', color: '#f2f2f3', border: 0, fontSize: 11 }}>
-            {active ? `${active.name} · ${active.meta}` : 'Original photo · nothing applied yet'}
+            {holding ? 'Original photo' : active ? `${active.name} · ${active.meta}` : 'Original photo · nothing applied yet'}
           </span>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
             {canvasTools.map((t) => (
-              <button key={t.name} onClick={t.act} style={{ height: 42, padding: '0 14px', background: 'rgba(242,242,243,.08)', border: '1px solid rgba(242,242,243,.22)', color: '#f2f2f3', fontFamily: 'var(--font-body)', fontSize: 13, cursor: 'pointer', opacity: t.dim }}>{t.name}</button>
+              <button
+                key={t.name}
+                onClick={t.act}
+                disabled={!t.enabled}
+                style={{ height: 42, padding: '0 14px', background: 'rgba(242,242,243,.08)', border: '1px solid rgba(242,242,243,.22)', color: '#f2f2f3', fontFamily: 'var(--font-body)', fontSize: 13, cursor: t.enabled ? 'pointer' : 'default', opacity: t.enabled ? 1 : .4 }}
+              >
+                {t.name}
+              </button>
             ))}
           </div>
         </div>
 
         <div style={{ flex: 1, minHeight: 0, position: 'relative', display: 'grid', placeItems: 'center', padding: 16 }}>
-          <div style={{ position: 'relative', maxWidth: '100%', maxHeight: '100%' }}>
-            <img
-              src={active?.image ?? BEFORE}
-              alt={active ? 'Property visualization' : 'Property today'}
-              style={{ maxWidth: '100%', maxHeight: '62vh', objectFit: 'contain', display: 'block', filter: active?.filter ?? 'none' }}
+          {shown ? (
+            <Canvas
+              src={shown}
+              alt={active && !holding ? 'Property visualization' : 'Property today'}
+              fitSignal={fitSignal}
+              onHoldChange={setHolding}
             />
-            {active && !state.generating && (
-              <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
-                {hotspots.map((h) => (
-                  <span key={h.label} style={{ position: 'absolute', left: h.x, top: h.y, padding: '5px 9px', background: 'rgba(29,45,61,.86)', color: '#f2f2f3', fontSize: 11.5, letterSpacing: '.08em', textTransform: 'uppercase', whiteSpace: 'nowrap', border: '1px solid rgba(242,242,243,.3)' }}>{h.label}</span>
-                ))}
-              </div>
-            )}
-          </div>
+          ) : (
+            <div style={{ color: '#f2f2f3', textAlign: 'center', maxWidth: 420 }}>
+              <h3 style={{ color: '#f2f2f3' }}>No photo to work from</h3>
+              <p style={{ opacity: .7 }}>Add a photo of the home, then confirm the areas.</p>
+              <button onClick={actions.go('photos')} className="btn btn-primary" style={{ height: 50, padding: '0 20px' }}>Go to photos</button>
+            </div>
+          )}
+
+          {after && !state.generating && (
+            <div style={{ position: 'absolute', left: 22, bottom: 22, fontSize: 12, letterSpacing: '.14em', textTransform: 'uppercase', color: 'rgba(242,242,243,.6)', pointerEvents: 'none' }}>
+              Press and hold to see the original
+            </div>
+          )}
 
           {state.generating && (
             <div style={{ position: 'absolute', inset: 16, background: 'rgba(29,45,61,.9)', display: 'grid', placeItems: 'center', overflow: 'hidden' }}>
@@ -78,25 +129,33 @@ export function Visualizer({ state, actions, panelKey }: { state: State; actions
         <div style={{ flex: 'none', borderTop: '1px solid rgba(242,242,243,.12)', padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 12, color: '#f2f2f3' }}>
           <span style={{ fontSize: 11.5, letterSpacing: '.18em', textTransform: 'uppercase', opacity: .55 }}>Versions</span>
           <div style={{ display: 'flex', gap: 10, alignItems: 'stretch', overflowX: 'auto' }}>
-            {state.versions.map((v) => (
+            {session.versions.map((v) => (
               <button
                 key={v.id}
-                onClick={() => actions.patch({ activeVersion: v.id })}
-                style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 12px 6px 6px', background: state.activeVersion === v.id ? 'rgba(89,128,166,.35)' : 'rgba(242,242,243,.06)', border: `1px solid ${state.activeVersion === v.id ? STEEL : 'rgba(242,242,243,.22)'}`, color: '#f2f2f3', cursor: 'pointer', fontFamily: 'var(--font-body)', textAlign: 'left', whiteSpace: 'nowrap' }}
+                onClick={() => actions.patch({ activeVersionId: v.id })}
+                style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 12px 6px 6px', background: state.activeVersionId === v.id ? 'rgba(89,128,166,.35)' : 'rgba(242,242,243,.06)', border: `1px solid ${state.activeVersionId === v.id ? STEEL : 'rgba(242,242,243,.22)'}`, color: '#f2f2f3', cursor: 'pointer', fontFamily: 'var(--font-body)', textAlign: 'left', whiteSpace: 'nowrap' }}
               >
                 <span style={{ display: 'block', width: 62, height: 44, overflow: 'hidden', background: 'rgba(242,242,243,.1)' }}>
-                  <img src={v.image} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', filter: v.filter }} />
+                  {session.urls[v.storagePath] && (
+                    <img src={session.urls[v.storagePath]} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  )}
                 </span>
                 <span style={{ display: 'block' }}>
-                  <span style={{ display: 'block', fontFamily: 'var(--font-heading)', fontSize: 16 }}>{v.name}</span>
+                  <span style={{ display: 'block', fontFamily: 'var(--font-heading)', fontSize: 16 }}>{v.isFavorite ? `★ ${v.name}` : v.name}</span>
                   <span style={{ display: 'block', fontSize: 11.5, opacity: .7 }}>{v.meta}</span>
                 </span>
               </button>
             ))}
-            <button onClick={actions.duplicateVersion} style={{ padding: '0 16px', background: 'none', border: '1px dashed rgba(242,242,243,.4)', color: '#f2f2f3', fontFamily: 'var(--font-heading)', fontSize: 16, cursor: 'pointer', whiteSpace: 'nowrap' }}>+ New version</button>
+            <button
+              onClick={actions.newVersion}
+              disabled={state.generating}
+              style={{ padding: '0 16px', background: 'none', border: '1px dashed rgba(242,242,243,.4)', color: '#f2f2f3', fontFamily: 'var(--font-heading)', fontSize: 16, cursor: 'pointer', whiteSpace: 'nowrap', opacity: state.generating ? .5 : 1 }}
+            >
+              + New version
+            </button>
           </div>
           <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-            <button onClick={actions.go('compare')} className="btn" style={{ height: 46, padding: '0 18px', background: 'rgba(242,242,243,.1)', border: '1px solid rgba(242,242,243,.3)', color: '#f2f2f3' }}>Compare</button>
+            <button onClick={actions.go('compare')} disabled={session.versions.length < 1} className="btn" style={{ height: 46, padding: '0 18px', background: 'rgba(242,242,243,.1)', border: '1px solid rgba(242,242,243,.3)', color: '#f2f2f3', opacity: session.versions.length ? 1 : .5 }}>Compare</button>
             <button onClick={() => actions.patch({ presenting: true })} className="btn btn-primary" style={{ height: 46, padding: '0 18px' }}>Present</button>
           </div>
         </div>
@@ -107,7 +166,7 @@ export function Visualizer({ state, actions, panelKey }: { state: State; actions
           <div style={{ fontSize: 11.5, letterSpacing: '.2em', textTransform: 'uppercase', color: 'var(--color-neutral-600)' }}>Editing</div>
           <h3 style={{ margin: '2px 0 10px' }}>{spec.title}</h3>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {state.cats.filter((c) => PANEL[c]).map((c) => (
+            {[...new Set(confirmed.map((d) => d.category))].filter((c) => PANEL[c]).map((c) => (
               <button
                 key={c}
                 onClick={() => actions.patch({ panelTab: c })}
@@ -116,6 +175,9 @@ export function Visualizer({ state, actions, panelKey }: { state: State; actions
                 {c}
               </button>
             ))}
+            {!confirmed.length && (
+              <span style={{ fontSize: 13, color: 'var(--color-neutral-600)' }}>No areas confirmed yet.</span>
+            )}
           </div>
         </div>
 
@@ -181,27 +243,42 @@ export function Visualizer({ state, actions, panelKey }: { state: State; actions
               <div>Wind rating — 130 mph / Class F</div>
               <div>Impact resistance — Class 3</div>
               <div>Warranty — Lifetime limited, transferable once</div>
-              <div>Coverage — 2,140 sq ft measured from photos</div>
+              <div>
+                Coverage —{' '}
+                {confirmed.some((d) => d.approxSqft)
+                  ? `${Math.round(confirmed.reduce((sum, d) => sum + (d.approxSqft ?? 0), 0)).toLocaleString()} sq ft estimated from the photo`
+                  : 'not estimated from this photo'}
+              </div>
             </div>
           )}
         </div>
 
         <div style={{ flex: 'none', borderTop: '1px solid var(--color-divider)', padding: '14px 18px', background: '#fff' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 13, color: 'var(--color-neutral-700)', marginBottom: 10 }}>
-            <span>{state.versions.length ? `3 areas applied · ${state.versions.length} version(s)` : `${state.areas.length} areas ready to render`}</span>
-            <span>{state.offline ? 'Saved on tablet' : 'Saved 2:31 PM'}</span>
+            <span>
+              {confirmed.length
+                ? `${confirmed.length} area${confirmed.length === 1 ? '' : 's'} · ${session.versions.length} version${session.versions.length === 1 ? '' : 's'}`
+                : 'No areas confirmed'}
+            </span>
           </div>
           <button
-            onClick={() => void actions.runGen(state.versions.length ? (state.activeVersion ?? 'A') : 'A')}
-            disabled={state.generating}
+            onClick={() => void actions.runGen(active ? active.name : 'Option A')}
+            disabled={state.generating || !confirmed.length}
             className="btn btn-primary"
-            style={{ width: '100%', height: 62, fontSize: 18, fontFamily: 'var(--font-heading)', letterSpacing: '.06em', textTransform: 'uppercase', justifyContent: 'center' }}
+            style={{ width: '100%', height: 62, fontSize: 18, fontFamily: 'var(--font-heading)', letterSpacing: '.06em', textTransform: 'uppercase', justifyContent: 'center', opacity: state.generating || !confirmed.length ? .55 : 1 }}
           >
-            {state.versions.length ? 'Re-render with these colors' : 'Generate visualization'}
+            {active ? 'Re-render with these colors' : 'Generate visualization'}
           </button>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
             <button onClick={actions.go('selections')} className="btn btn-secondary" style={{ height: 48, justifyContent: 'center' }}>Selections</button>
-            <button onClick={() => actions.flash('Rear wall siding restored to the original photo.')} className="btn btn-secondary" style={{ height: 48, justifyContent: 'center' }}>Revert area</button>
+            <button
+              onClick={() => active && void sessionActions.favoriteVersion(active.id)}
+              disabled={!active}
+              className="btn btn-secondary"
+              style={{ height: 48, justifyContent: 'center', opacity: active ? 1 : .45 }}
+            >
+              {active?.isFavorite ? '✓ Favorite' : 'Mark favorite'}
+            </button>
           </div>
         </div>
       </aside>
