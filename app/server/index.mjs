@@ -3,6 +3,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generateHandler } from './generate.mjs';
+import { detectHandler } from './detect.mjs';
 
 const DIST = fileURLToPath(new URL('../dist/', import.meta.url));
 const PORT = Number(process.env.PORT) || 4173;
@@ -29,6 +30,10 @@ createServer(async (req, res) => {
   const url = new URL(req.url ?? '/', 'http://localhost');
   if (url.pathname === '/api/generate') {
     await generateHandler(req, res);
+    return;
+  }
+  if (url.pathname === '/api/detect') {
+    await detectHandler(req, res);
     return;
   }
   const requested = normalize(join(DIST, decodeURIComponent(url.pathname)));

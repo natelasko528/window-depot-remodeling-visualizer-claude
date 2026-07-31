@@ -1,7 +1,9 @@
 import { PANEL } from './data';
-import type { State } from './store';
+import { resolveSelection } from './store';
+import type { SessionData } from './session';
+import type { Version } from './lib/types';
 
-export type Selection = {
+export type SelectionRow = {
   cat: string;
   line: string;
   config: string;
@@ -11,23 +13,57 @@ export type Selection = {
   version: string;
 };
 
-export function selectionsFor(state: State): Selection[] {
-  const hex = (cat: string, name: string) => PANEL[cat].colors.find((c) => c.name === name)?.hex ?? '#f4f2ee';
-  return [
-    { cat: 'Roofing', line: 'CertainTeed Landmark PRO', config: 'Architectural, Shadow Ridge hip & ridge', color: state.picks.Roofing, hex: hex('Roofing', state.picks.Roofing), where: 'Patio roof, garage plane', version: 'Both versions' },
-    { cat: 'Siding', line: 'ASCEND Composite Cladding', config: '7" clapboard, horizontal, matched corners', color: state.picks.Siding, hex: hex('Siding', state.picks.Siding), where: 'Rear wall, second story', version: state.favorite ? `Option ${state.favorite}` : 'Option A' },
-    { cat: 'Patio doors', line: 'ProVia Endure Sliding', config: '6 ft, Low-E, brass lever, retractable screen', color: state.picks['Patio doors'], hex: hex('Patio doors', state.picks['Patio doors']), where: 'Rear elevation', version: 'Both versions' },
-    { cat: 'Gutters, soffit & fascia', line: '6" seamless + leaf protection', config: '34 lin ft, 2 downspouts, vented soffit', color: 'White', hex: '#f4f2ee', where: 'Patio roof run', version: 'Not visualized' },
-    { cat: 'Windows', line: 'ProVia Endure', config: 'Double hung, ComfortTech triple, no grids', color: 'White', hex: '#f4f2ee', where: 'Garage (2 units)', version: 'Quoted only' },
-  ];
+/**
+ * The quote-facing selection list.
+ *
+ * Built from the surfaces actually detected on the active photo, so it cannot
+ * claim the homeowner is buying siding for a wall that was never in frame —
+ * which the hardcoded version did by construction.
+ */
+export function selectionsFor(session: SessionData): SelectionRow[] {
+  const favorite = session.versions.find((v) => v.isFavorite);
+
+  const places = new Map<string, string[]>();
+  for (const d of session.detections) {
+    if (!d.selected) continue;
+    const list = places.get(d.category) ?? [];
+    list.push(d.label);
+    places.set(d.category, list);
+  }
+
+  // A category belongs in the quote if it was seen on the photo, or the rep
+  // explicitly chose products for it.
+  const categories = new Set<string>([
+    ...places.keys(),
+    ...session.selections.map((s) => s.category),
+  ]);
+
+  return [...categories]
+    .filter((cat) => PANEL[cat])
+    .map((cat) => {
+      const spec = PANEL[cat];
+      const { line, color } = resolveSelection(session, cat);
+      return {
+        cat,
+        line: line.startsWith(spec.brand) ? line : `${spec.brand} ${line}`,
+        config: spec.options.map((o) => `${o.label}: ${o.value}`).join(', '),
+        color,
+        hex: spec.colors.find((c) => c.name === color)?.hex ?? '#f4f2ee',
+        where: places.get(cat)?.join(', ') ?? 'Quoted, not visualized',
+        version: favorite ? favorite.name : session.versions.length ? 'All versions' : 'Not visualized',
+      };
+    });
 }
 
-export function favName(state: State) {
-  return state.favorite === 'B'
-    ? 'Option B — Sandcastle / Moiré Black'
-    : 'Option A — Alabaster / Weathered Wood';
+export function favoriteVersion(session: SessionData): Version | null {
+  return (
+    session.versions.find((v) => v.isFavorite)
+    ?? session.versions[session.versions.length - 1]
+    ?? null
+  );
 }
 
-export function versionImage(state: State, id: 'A' | 'B') {
-  return state.versions.find((v) => v.id === id);
+export function favName(session: SessionData): string {
+  const version = favoriteVersion(session);
+  return version ? `${version.name} — ${version.meta}` : 'No version rendered yet';
 }

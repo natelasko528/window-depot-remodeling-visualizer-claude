@@ -1,4 +1,7 @@
 import { PAPER, STEEL, STEP_LABELS } from '../data';
+import { useSyncStatus } from './SyncSheet';
+import { isConfigured } from '../lib/supabase';
+import type { SessionData } from '../session';
 import type { Actions, Screen, State } from '../store';
 
 const STEP_INDEX: Partial<Record<Screen, number>> = {
@@ -9,11 +12,33 @@ const STEP_TARGET: Screen[] = ['customers', 'photos', 'areas', 'visualizer', 'se
 
 const IN_PROJECT: Screen[] = ['customers', 'setup', 'photos', 'areas', 'visualizer', 'compare', 'selections', 'summary'];
 
-export function Header({ state, actions }: { state: State; actions: Actions }) {
+export function Header({
+  state,
+  session,
+  actions,
+}: {
+  state: State;
+  session: SessionData;
+  actions: Actions;
+}) {
   const inProject = IN_PROJECT.includes(state.screen);
   const atHome = state.screen === 'home';
   const current = STEP_INDEX[state.screen];
   const wide = state.vw >= 1240;
+  const sync = useSyncStatus();
+
+  const categories = [...new Set(session.detections.filter((d) => d.selected).map((d) => d.category))];
+  const subtitle = [session.customer?.address, categories.join(', ')].filter(Boolean).join(' · ');
+
+  const syncLabel = !isConfigured
+    ? 'Saved on this tablet'
+    : !sync.online
+      ? `Offline${sync.pending ? ` — ${sync.pending} queued` : ''}`
+      : sync.syncing
+        ? 'Syncing…'
+        : sync.pending
+          ? `${sync.pending} queued`
+          : 'All changes saved';
 
   return (
     <header style={{ flex: 'none', height: 62, background: 'var(--color-accent-900)', color: '#f2f2f3', display: 'flex', alignItems: 'center', gap: 20, padding: '0 18px' }}>
@@ -28,8 +53,12 @@ export function Header({ state, actions }: { state: State; actions: Actions }) {
       {inProject && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 22, flex: 1, minWidth: 0, overflow: 'hidden' }}>
           <div style={{ borderLeft: '1px solid rgba(242,242,243,.22)', paddingLeft: 18, minWidth: 0, flex: '0 1 auto' }}>
-            <div style={{ fontFamily: 'var(--font-heading)', fontSize: 18, letterSpacing: '.01em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>Nowak residence</div>
-            <div style={{ fontSize: 11.5, opacity: .62, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>12345 W. Bluemound Rd, Wauwatosa · Roofing, siding, patio door</div>
+            <div style={{ fontFamily: 'var(--font-heading)', fontSize: 18, letterSpacing: '.01em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {session.customer?.name ?? 'No customer selected'}
+            </div>
+            <div style={{ fontSize: 11.5, opacity: .62, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {subtitle || 'Pick a customer to start a project'}
+            </div>
           </div>
           <nav style={{ display: 'flex', alignItems: 'center', gap: 2, minWidth: 0, overflowX: 'auto', flex: '1 1 auto' }}>
             {STEP_LABELS.map((label, i) => (
@@ -57,8 +86,8 @@ export function Header({ state, actions }: { state: State; actions: Actions }) {
           onClick={() => actions.patch({ sheet: true })}
           style={{ display: 'flex', alignItems: 'center', gap: 8, height: 40, padding: '0 14px', background: 'rgba(242,242,243,.08)', border: '1px solid rgba(242,242,243,.2)', color: '#f2f2f3', fontFamily: 'var(--font-body)', fontSize: 12.5, cursor: 'pointer' }}
         >
-          <span style={{ width: 8, height: 8, borderRadius: '50%', background: state.offline ? '#c9a227' : '#7fae7a' }} />
-          <span>{state.offline ? 'Offline — 3 changes queued' : 'All changes saved'}</span>
+          <span style={{ width: 8, height: 8, borderRadius: '50%', background: !sync.online || sync.pending ? '#c9a227' : '#7fae7a' }} />
+          <span>{syncLabel}</span>
         </button>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingLeft: 12, borderLeft: '1px solid rgba(242,242,243,.22)' }}>
           <div style={{ width: 36, height: 36, border: '1px solid rgba(242,242,243,.35)', display: 'grid', placeItems: 'center', fontFamily: 'var(--font-heading)', fontSize: 14 }}>AR</div>

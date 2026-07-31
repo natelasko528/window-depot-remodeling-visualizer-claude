@@ -27,7 +27,20 @@ export function Library({ actions }: { actions: Actions }) {
               </div>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12.5, color: 'var(--color-neutral-700)' }}>
                 <span>{l.cached}</span>
-                <button onClick={actions.noop} className="btn btn-ghost" style={{ height: 42, padding: '0 12px' }}>Brochure</button>
+                <button
+                  onClick={() => void (async () => {
+                    // Loaded on demand: the PDF stack is ~390 kB and most
+                    // appointments never open it.
+                    const { buildBrochurePdf, downloadBlob } = await import('../lib/export');
+                    const slug = `${l.brand}-${l.cat}`.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+                    downloadBlob(buildBrochurePdf(l), `window-depot-${slug}.pdf`);
+                    actions.flash(`${l.brand} product sheet saved.`);
+                  })()}
+                  className="btn btn-ghost"
+                  style={{ height: 42, padding: '0 12px' }}
+                >
+                  Brochure
+                </button>
               </div>
             </div>
           ))}

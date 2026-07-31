@@ -1,0 +1,19 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "functions": {
+    "api/generate.mjs": {
+      "maxDuration": 60,
+      "memory": 1024
+    },
+    "api/detect.mjs": {
+      "maxDuration": 60,
+      "memory": 1024
+    }
+  },
+  "env": {
+    "GENERATE_TIMEOUT_MS": "55000"
+  }
+}
