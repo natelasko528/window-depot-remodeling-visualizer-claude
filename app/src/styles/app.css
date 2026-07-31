@@ -1,0 +1,10 @@
+html, body, #root { height: 100%; margin: 0; overflow: hidden; }
+
+@keyframes wdBlink { 0%, 100% { opacity: .25 } 50% { opacity: 1 } }
+@keyframes wdSweep { 0% { transform: translateY(-100%) } 100% { transform: translateY(400%) } }
+
+a { color: var(--color-accent-700); }
+a:hover { color: var(--color-accent-900); }
+
+::-webkit-scrollbar { width: 8px; height: 8px }
+::-webkit-scrollbar-thumb { background: var(--color-neutral-400) }
