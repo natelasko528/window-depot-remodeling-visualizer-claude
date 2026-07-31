@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { PANEL } from './data';
 import { generateVisualization } from './api';
 import { blobToDataUrl, polygonMask } from './lib/image';
+import { buildReferences, referenceClause } from './lib/reference';
+import { MAX_REFERENCES } from './lib/limits';
 import { getBlob } from './lib/db';
 import type { SessionActions, SessionData } from './session';
 import type { Detection } from './lib/types';
@@ -82,6 +84,24 @@ export type RenderPass = {
   instruction: string;
 };
 
+/**
+ * Total normalised area a category covers, by the shoelace formula. Used only
+ * to rank categories when there are more of them than reference slots — the
+ * biggest surfaces are the ones a wrong colour is most obvious on.
+ */
+export function coveredArea(detections: Detection[]): number {
+  return detections.reduce((total, d) => {
+    const points = d.polygon;
+    let sum = 0;
+    for (let i = 0; i < points.length; i += 1) {
+      const a = points[i];
+      const b = points[(i + 1) % points.length];
+      sum += a.x * b.y - b.x * a.y;
+    }
+    return total + Math.abs(sum) / 2;
+  }, 0);
+}
+
 /** The sentence describing one category's change, naming where it applies. */
 export function instructionFor(session: SessionData, category: string, detections: Detection[]): string {
   const spec = PANEL[category];
@@ -93,11 +113,13 @@ export function instructionFor(session: SessionData, category: string, detection
 }
 
 /**
- * Groups the confirmed surfaces into one pass per product category.
+ * Groups the confirmed surfaces into one entry per product category, ordered
+ * large-surface-first.
  *
- * Each pass is rendered separately against a mask of only its own polygons,
- * which is what stops a siding colour from creeping onto the roof. Categories
- * with no catalogue entry are dropped here rather than silently ignored later.
+ * All of them render in a single call — each contributes an instruction line
+ * and a material reference image, and the mask is the union of every polygon.
+ * Categories with no catalogue entry are dropped here rather than silently
+ * ignored later.
  */
 export function planPasses(session: SessionData): RenderPass[] {
   const byCategory = new Map<string, Detection[]>();
@@ -176,16 +198,16 @@ export function useVisualizer(session: SessionData, sessionActions: SessionActio
   }, []);
 
   /**
-   * Renders the confirmed selections against the active photo, one masked pass
-   * per product category.
+   * Renders every confirmed selection against the active photo in one call.
    *
-   * Sequential rather than one combined call because the image API takes a
-   * single mask: rendering each category against a mask of only its own
-   * polygons is what keeps a siding colour off the roof. Each pass feeds its
-   * result to the next, and each is its own request — which also keeps every
-   * call inside the serverless function's 60s ceiling.
+   * The image API takes up to ten images and applies the mask to the first, so
+   * the photograph leads and each category contributes a material reference
+   * after it. That is what makes the render match the product rather than the
+   * model's idea of "Alabaster" — the mask, a union of every confirmed polygon,
+   * still keeps the sky, lawn and neighbouring property out of the edit.
    *
-   * `only` restricts the run to specific categories, used by per-area re-render.
+   * `only` restricts the run to specific categories, used by per-category
+   * re-render; the path is otherwise identical.
    */
   const runGen = useCallback(async (versionName: string, only?: string[]) => {
     const current = sessionRef.current;
@@ -197,78 +219,79 @@ export function useVisualizer(session: SessionData, sessionActions: SessionActio
     }
 
     const all = planPasses(current);
-    const passes = only?.length ? all.filter((p) => only.includes(p.category)) : all;
+    let passes = only?.length ? all.filter((p) => only.includes(p.category)) : all;
     if (!passes.length) {
       flash('Confirm at least one area on the photo before rendering.');
       return;
     }
 
+    // Over budget, the categories covering the most of the photo keep their
+    // reference. Every category still renders — the rest are described in words
+    // alone rather than being dropped from the job.
+    let dropped: string[] = [];
+    if (passes.length > MAX_REFERENCES) {
+      const ranked = [...passes].sort((a, b) => coveredArea(b.detections) - coveredArea(a.detections));
+      dropped = ranked.slice(MAX_REFERENCES).map((p) => p.category);
+    }
+
     stopGeneration();
-    patch({ generating: true, genStage: 0, stages: passes.map((p) => `Applying ${p.category.toLowerCase()}`) });
+    patch({
+      generating: true,
+      genStage: 0,
+      stages: ['Preparing the photo and material references', 'Rendering the elevation'],
+    });
 
     const controller = new AbortController();
     abort.current = controller;
 
-    // Whatever has rendered so far. On a mid-sequence failure this is still a
-    // real improvement on the original photo, so it is saved rather than lost.
-    let base: Blob | null = null;
-    const applied: string[] = [];
-    let failure = '';
-
     try {
       const source = await getBlob(photo.storagePath);
       if (!source) throw new Error('That photo is no longer on this tablet.');
-      base = source;
 
-      for (const [index, pass] of passes.entries()) {
-        if (controller.signal.aborted) return;
-        patch({ genStage: index });
+      const referenced = passes.filter((p) => !dropped.includes(p.category));
+      const references = await buildReferences(current, referenced.map((p) => p.category));
 
-        const maskBlob = await polygonMask(
-          photo.width,
-          photo.height,
-          pass.detections.map((d) => d.polygon),
-        );
+      // Instruction lines cite their reference by position, so this ordering is
+      // the contract between the prompt and the attached images.
+      const byCategory = new Map(references.map((r, i) => [r.category, { index: i, source: r.source }]));
+      const instructions = passes.map((pass) => {
+        const ref = byCategory.get(pass.category);
+        return ref ? `${pass.instruction} ${referenceClause(ref.index, ref.source)}` : pass.instruction;
+      });
 
-        try {
-          const result = await generateVisualization(
-            await blobToDataUrl(base),
-            [pass.instruction],
-            controller.signal,
-            await blobToDataUrl(maskBlob),
-          );
-          if (controller.signal.aborted) return;
-          base = await (await fetch(result)).blob();
-          applied.push(pass.category);
-        } catch (err) {
-          if (controller.signal.aborted) return;
-          failure = err instanceof Error ? err.message : String(err);
-          break;
-        }
-      }
+      const mask = await polygonMask(
+        photo.width,
+        photo.height,
+        passes.flatMap((p) => p.detections.map((d) => d.polygon)),
+      );
 
-      if (!applied.length) {
-        patch({ generating: false, genStage: -1 });
-        flash(failure || 'The render failed.');
-        return;
-      }
+      patch({ genStage: 1 });
+      const result = await generateVisualization(
+        await blobToDataUrl(source),
+        instructions,
+        controller.signal,
+        await blobToDataUrl(mask),
+        await Promise.all(references.map((r) => blobToDataUrl(r.blob))),
+      );
+      if (controller.signal.aborted) return;
 
-      const meta = applied
-        .map((category) => resolveSelection(current, category).color)
+      const rendered = await (await fetch(result)).blob();
+      const meta = passes
+        .map((p) => resolveSelection(current, p.category).color)
         .filter(Boolean)
         .join(' / ');
 
       const version = await sessionActions.addVersion({
         name: versionName,
-        meta: meta || applied.join(', '),
-        instructions: passes.filter((p) => applied.includes(p.category)).map((p) => p.instruction),
-        blob: base!,
+        meta: meta || passes.map((p) => p.category).join(', '),
+        instructions,
+        blob: rendered,
       });
 
       patch({ generating: false, genStage: -1, activeVersionId: version.id });
       flash(
-        failure
-          ? `Saved with ${applied.join(', ').toLowerCase()} applied — ${passes.length - applied.length} step(s) failed: ${failure}`
+        dropped.length
+          ? `${versionName} saved. ${dropped.join(' and ')} rendered from the description only — too many categories for reference images.`
           : `${versionName} saved to this project.`,
       );
     } catch (err) {

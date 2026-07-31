@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { generateFromPayload, imageSize } from '../generate.mjs';
+import { MAX_IMAGES, MAX_REFERENCES, generateFromPayload, imageSize } from '../generate.mjs';
 import { detectFromPayload, schemaFor } from '../detect.mjs';
 import { PANEL } from '../../src/data.ts';
+import { MAX_IMAGES as CLIENT_MAX_IMAGES, MAX_REFERENCES as CLIENT_MAX_REFERENCES } from '../../src/lib/limits.ts';
 
 /** Minimal but structurally valid PNG header at a known size. */
 function png(width, height) {
@@ -99,6 +100,77 @@ describe('generateFromPayload', () => {
     expect(result.status).toBe(400);
   });
 
+  it('sends the photo first and each reference after it', async () => {
+    const result = await generateFromPayload({
+      image: IMAGE,
+      references: [dataUrl(png(512, 512)), dataUrl(png(512, 512))],
+      instructions: ['Roofing — black.', 'Siding — white.'],
+    });
+    expect(result.status).toBe(200);
+
+    const images = body.getAll('image[]');
+    expect(images).toHaveLength(3);
+    expect(images[0].name).toBe('photo.png');
+    expect(images[1].name).toBe('reference-1.png');
+    expect(images[2].name).toBe('reference-2.png');
+  });
+
+  it('tells the model the trailing images are references, not scenery', async () => {
+    await generateFromPayload({
+      image: IMAGE,
+      references: [dataUrl(png(512, 512))],
+      instructions: ['Siding — white.'],
+    });
+    const prompt = body.get('prompt');
+    expect(prompt).toContain('material reference');
+    expect(prompt).toContain('Do not copy their shape, framing, edges or background');
+  });
+
+  it('says nothing about references when none are attached', async () => {
+    await generateFromPayload({ image: IMAGE, instructions: ['Siding — white.'] });
+    expect(body.getAll('image[]')).toHaveLength(1);
+    expect(body.get('prompt')).not.toContain('material reference');
+  });
+
+  it('rejects more references than the image API allows rather than truncating', async () => {
+    const tooMany = Array.from({ length: MAX_REFERENCES + 1 }, () => dataUrl(png(512, 512)));
+    const result = await generateFromPayload({ image: IMAGE, references: tooMany, instructions: ['x'] });
+    expect(result.status).toBe(400);
+    expect(result.body.error).toMatch(new RegExp(`${MAX_IMAGES} images`));
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it('accepts exactly the maximum', async () => {
+    const most = Array.from({ length: MAX_REFERENCES }, () => dataUrl(png(512, 512)));
+    const result = await generateFromPayload({ image: IMAGE, references: most, instructions: ['x'] });
+    expect(result.status).toBe(200);
+    expect(body.getAll('image[]')).toHaveLength(MAX_IMAGES);
+  });
+
+  it('rejects a reference that is not an image', async () => {
+    const result = await generateFromPayload({ image: IMAGE, references: ['not-a-data-url'], instructions: ['x'] });
+    expect(result.status).toBe(400);
+    expect(result.body.error).toMatch(/Reference 1/);
+  });
+
+  it('rejects references that are not an array', async () => {
+    const result = await generateFromPayload({ image: IMAGE, references: 'nope', instructions: ['x'] });
+    expect(result.status).toBe(400);
+  });
+
+  it('still applies the mask to the photo when references are attached', async () => {
+    const result = await generateFromPayload({
+      image: IMAGE,
+      mask: IMAGE,
+      references: [dataUrl(png(512, 512))],
+      instructions: ['Siding — white.'],
+    });
+    // The reference is 512x512 and must not be compared against the mask —
+    // the mask applies to the first image only.
+    expect(result.status).toBe(200);
+    expect(body.has('mask')).toBe(true);
+  });
+
   it('surfaces an upstream failure as a readable error', async () => {
     globalThis.fetch = vi.fn(async () => ({
       ok: false, status: 400,
@@ -144,5 +216,12 @@ describe('detection can only ever return sellable categories', () => {
     for (const category of schema.properties.surfaces.items.properties.category.enum) {
       expect(PANEL[category], `${category} is detectable but has no products`).toBeDefined();
     }
+  });
+});
+
+describe('client and server agree on the image budget', () => {
+  it('shares the same cap, so the client never builds a request the server rejects', () => {
+    expect(CLIENT_MAX_IMAGES).toBe(MAX_IMAGES);
+    expect(CLIENT_MAX_REFERENCES).toBe(MAX_REFERENCES);
   });
 });

@@ -41,11 +41,12 @@ export async function generateVisualization(
   instructions: string[],
   signal: AbortSignal,
   mask?: string,
+  references?: string[],
 ): Promise<string> {
   const res = await fetch('/api/generate', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ image, instructions, mask }),
+    body: JSON.stringify({ image, instructions, mask, references }),
     signal,
   });
   const payload = await res.json().catch(() => null);

@@ -5,8 +5,15 @@ export const GRAIN = 'repeating-linear-gradient(180deg, rgba(0,0,0,.06) 0 1px, t
 
 
 
-export type ProductLine = { name: string; note: string; tier: string };
-export type Swatch = { name: string; hex: string };
+/**
+ * `image` on either type is a material reference sent to the renderer — a clean
+ * crop of the finish, not a marketing shot. A colour's own image wins over the
+ * product line's, since the colour is what the rep just chose. Absent one, the
+ * renderer falls back to a flat tile of `hex`, which cannot express a grain or
+ * a shingle profile; `texture` describes it in words until real art exists.
+ */
+export type ProductLine = { name: string; note: string; tier: string; image?: string };
+export type Swatch = { name: string; hex: string; image?: string; texture?: string };
 export type PanelOption = { label: string; value: string };
 
 export type PanelSpec = {
