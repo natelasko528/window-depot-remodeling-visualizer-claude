@@ -136,6 +136,12 @@ export function Home({
                 Connection, queued changes and what is stored on this tablet
               </span>
             </button>
+            <button onClick={actions.go('settings')} style={{ gridColumn: '1 / -1', textAlign: 'left', padding: 16, background: 'none', border: '1px solid var(--color-divider)', cursor: 'pointer', fontFamily: 'var(--font-body)' }}>
+              <span style={{ display: 'block', fontFamily: 'var(--font-heading)', fontSize: 21 }}>Settings</span>
+              <span style={{ display: 'block', fontSize: 13, color: 'var(--color-neutral-700)', marginTop: 2 }}>
+                Your details, the product catalogue, pricing and which services are connected
+              </span>
+            </button>
           </div>
         </div>
       </div>

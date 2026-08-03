@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MAX_IMAGES, MAX_REFERENCES, generateFromPayload, imageSize } from '../generate.mjs';
+import { MAX_IMAGES, MAX_REFERENCES, generateFromPayload, imageSize, sizeForPhoto } from '../generate.mjs';
 import { detectFromPayload, schemaFor } from '../detect.mjs';
 import { PANEL } from '../../src/data.ts';
 import { MAX_IMAGES as CLIENT_MAX_IMAGES, MAX_REFERENCES as CLIENT_MAX_REFERENCES } from '../../src/lib/limits.ts';
@@ -25,6 +25,23 @@ describe('imageSize', () => {
 
   it('returns null for something that is not a PNG', () => {
     expect(imageSize(Buffer.from('not an image'), 'image/png')).toBeNull();
+  });
+});
+
+describe('sizeForPhoto', () => {
+  it('returns the photo’s own size when it is already a supported one', () => {
+    expect(sizeForPhoto({ width: 1536, height: 1024 })).toBe('1536x1024');
+    expect(sizeForPhoto({ width: 1024, height: 1536 })).toBe('1024x1536');
+    expect(sizeForPhoto({ width: 1024, height: 1024 })).toBe('1024x1024');
+  });
+
+  it('keeps a portrait photo portrait, so the render lands in the same frame', () => {
+    expect(sizeForPhoto({ width: 2000, height: 3000 })).toBe('1024x1536');
+  });
+
+  it('gives up rather than guessing when the dimensions are unreadable', () => {
+    expect(sizeForPhoto(null)).toBeNull();
+    expect(sizeForPhoto({ width: 0, height: 0 })).toBeNull();
   });
 });
 
@@ -169,6 +186,22 @@ describe('generateFromPayload', () => {
     // the mask applies to the first image only.
     expect(result.status).toBe(200);
     expect(body.has('mask')).toBe(true);
+  });
+
+  it('asks for the size the photo already is, not a fixed one from the environment', async () => {
+    process.env.OPENAI_IMAGE_SIZE = '1536x1024';
+    await generateFromPayload({ image: dataUrl(png(1024, 1536)), instructions: ['Siding — white.'] });
+    // A portrait elevation rendered at 1536×1024 comes back re-cropped, which
+    // breaks the before/after slider and any mask built against the original.
+    expect(body.get('size')).toBe('1024x1536');
+    delete process.env.OPENAI_IMAGE_SIZE;
+  });
+
+  it('falls back to the configured size only when the photo cannot be measured', async () => {
+    process.env.OPENAI_IMAGE_SIZE = '1024x1024';
+    await generateFromPayload({ image: dataUrl(Buffer.from('not a real jpeg'), 'image/jpeg'), instructions: ['x'] });
+    expect(body.get('size')).toBe('1024x1024');
+    delete process.env.OPENAI_IMAGE_SIZE;
   });
 
   it('surfaces an upstream failure as a readable error', async () => {

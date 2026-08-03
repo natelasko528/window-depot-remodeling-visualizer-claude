@@ -14,6 +14,31 @@ const MAX_BODY_BYTES = 25 * 1024 * 1024;
 export const MAX_IMAGES = 10;
 export const MAX_REFERENCES = MAX_IMAGES - 1;
 
+/** The output sizes gpt-image-1 supports. Mirrors RENDER_SIZES in lib/image.ts. */
+const RENDER_SIZES = [
+  { width: 1024, height: 1024 },
+  { width: 1536, height: 1024 },
+  { width: 1024, height: 1536 },
+];
+
+/**
+ * The supported size closest to the photograph's own aspect ratio.
+ *
+ * Asking for a fixed size regardless of the photo is how a portrait elevation
+ * comes back re-framed as a landscape one: the result then no longer lines up
+ * with the original in the before/after slider, and a second masked pass over
+ * it lands on the wrong pixels. Photos are already normalised to one of these
+ * sizes at capture, so in practice this reads the answer back off the photo.
+ */
+export function sizeForPhoto(dimensions) {
+  if (!dimensions?.width || !dimensions?.height) return null;
+  const aspect = dimensions.width / dimensions.height;
+  const best = RENDER_SIZES.reduce((a, b) => (
+    Math.abs(b.width / b.height - aspect) < Math.abs(a.width / a.height - aspect) ? b : a
+  ), RENDER_SIZES[0]);
+  return `${best.width}x${best.height}`;
+}
+
 /**
  * Instruction lines arrive already naming their reference by ordinal ("…as
  * shown in reference image 2"), because the client is what decides the order
@@ -131,6 +156,8 @@ export async function generateFromPayload(payload) {
     return { status: 400, body: { error: 'Expected at least one product change in `instructions`.' } };
   }
 
+  const imageDims = imageSize(image.buffer, image.mime);
+
   // The mask confines the edit to one set of surfaces. Optional: without it the
   // whole photograph is offered to the model and the prompt alone constrains it.
   let mask = null;
@@ -140,7 +167,6 @@ export async function generateFromPayload(payload) {
       return { status: 400, body: { error: 'Expected `mask` as a base64 PNG data URL.' } };
     }
 
-    const imageDims = imageSize(image.buffer, image.mime);
     const maskDims = imageSize(mask.buffer, mask.mime);
     if (imageDims && maskDims && (imageDims.width !== maskDims.width || imageDims.height !== maskDims.height)) {
       return {
@@ -186,7 +212,7 @@ export async function generateFromPayload(payload) {
   const form = new FormData();
   form.append('model', process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1');
   form.append('prompt', composePrompt(instructions, { masked: Boolean(mask), references: references.length }));
-  form.append('size', process.env.OPENAI_IMAGE_SIZE || '1536x1024');
+  form.append('size', sizeForPhoto(imageDims) || process.env.OPENAI_IMAGE_SIZE || '1536x1024');
   form.append('n', '1');
 
   // Repeated `image[]` fields are the documented multi-image shape. The

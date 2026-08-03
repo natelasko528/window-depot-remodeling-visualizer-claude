@@ -1,14 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { AreaEditor, type EditorMode } from '../components/AreaEditor';
-import { INK, PANEL, PAPER, STEEL } from '../data';
+import { INK, PAPER, STEEL } from '../data';
 import { detectSurfaces } from '../api';
+import { detectableCategories, useCatalog } from '../lib/catalog';
 import { getBlob } from '../lib/db';
 import { blobToDataUrl } from '../lib/image';
 import type { Detection, Point } from '../lib/types';
 import type { SessionActions, SessionData } from '../session';
 import type { Actions, State } from '../store';
-
-const CATEGORIES = Object.keys(PANEL);
 
 /** Label anchor: the topmost point, so the tag sits above the shape. */
 function anchor(polygon: Point[]) {
@@ -30,8 +29,19 @@ export function Areas({
   const [activeId, setActiveId] = useState<string | null>(null);
   const [mode, setMode] = useState<EditorMode>('select');
   const [draft, setDraft] = useState<Point[]>([]);
-  const [draftCategory, setDraftCategory] = useState(CATEGORIES[0]);
+  const [draftCategory, setDraftCategory] = useState('');
   const abort = useRef<AbortController>(undefined);
+
+  // Only categories marked visualizable in settings: detection cannot find a
+  // bathroom on a photograph of an elevation, and offering it as a draw target
+  // would put a surface in the render that has nothing to render.
+  const { catalog } = useCatalog();
+  const categories = detectableCategories(catalog);
+
+  // Keeps the draw target on something that still exists after a catalogue edit.
+  useEffect(() => {
+    if (categories.length && !categories.includes(draftCategory)) setDraftCategory(categories[0]);
+  }, [categories, draftCategory]);
 
   const photo = session.photos.find((p) => p.id === session.activePhotoId) ?? null;
   const url = photo ? session.urls[photo.storagePath] : null;
@@ -48,7 +58,7 @@ export function Areas({
     try {
       const blob = await getBlob(photo.storagePath);
       if (!blob) throw new Error('That photo is no longer on this tablet.');
-      const surfaces = await detectSurfaces(await blobToDataUrl(blob), CATEGORIES, controller.signal);
+      const surfaces = await detectSurfaces(await blobToDataUrl(blob), categories, controller.signal);
       if (controller.signal.aborted) return;
 
       if (!surfaces.length) {
@@ -155,7 +165,7 @@ export function Areas({
                   onChange={(e) => setDraftCategory(e.target.value)}
                   style={{ height: 40, padding: '0 10px', background: 'rgba(242,242,243,.1)', color: PAPER, border: '1px solid rgba(242,242,243,.3)', fontFamily: 'var(--font-body)', fontSize: 13.5 }}
                 >
-                  {CATEGORIES.map((c) => (
+                  {categories.map((c) => (
                     <option key={c} value={c} style={{ color: '#1d2d3d' }}>{c}</option>
                   ))}
                 </select>

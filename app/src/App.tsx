@@ -1,3 +1,4 @@
+import { Suspense, lazy } from 'react';
 import { Header } from './components/Header';
 import { Presentation } from './components/Presentation';
 import { SyncSheet, Toast } from './components/SyncSheet';
@@ -12,6 +13,10 @@ import { Summary } from './screens/Summary';
 import { Visualizer } from './screens/Visualizer';
 import { useSession } from './session';
 import { useVisualizer } from './store';
+
+// Set up once and then left alone, so its catalogue editor is not worth
+// carrying in the bundle every appointment starts with.
+const Settings = lazy(() => import('./screens/Settings').then((m) => ({ default: m.Settings })));
 
 export function App() {
   const { data: session, actions: sessionActions } = useSession();
@@ -31,6 +36,11 @@ export function App() {
         {state.screen === 'selections' && <Selections session={session} actions={actions} />}
         {state.screen === 'summary' && <Summary session={session} actions={actions} />}
         {state.screen === 'library' && <Library actions={actions} />}
+        {state.screen === 'settings' && (
+          <Suspense fallback={<div style={{ padding: 34, color: 'var(--color-neutral-600)' }}>Opening settings…</div>}>
+            <Settings actions={actions} />
+          </Suspense>
+        )}
       </main>
 
       {state.presenting && <Presentation state={state} session={session} sessionActions={sessionActions} actions={actions} />}

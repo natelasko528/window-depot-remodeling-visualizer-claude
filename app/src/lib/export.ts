@@ -10,6 +10,7 @@ import { jsPDF } from 'jspdf';
 import { getBlob } from './db';
 import { blobToDataUrl } from './image';
 import { selectionsFor } from '../derived';
+import { activeSettings } from './settings';
 import type { SessionData } from '../session';
 
 const INK = '#1d2d3d';
@@ -80,7 +81,17 @@ export async function buildProjectPdf(session: SessionData): Promise<Blob> {
     y += 6;
   }
   doc.text(`Prepared ${new Date().toLocaleDateString()}`, PAGE.margin, y);
-  y += 12;
+  y += 6;
+
+  // Who to call. Taken from settings so a shared tablet handed to another rep
+  // stops putting the previous one's number in front of the homeowner.
+  const rep = activeSettings().rep;
+  const repLine = [rep.name, rep.phone, rep.email].filter(Boolean).join('  ·  ');
+  if (repLine) {
+    doc.text(repLine, PAGE.margin, y);
+    y += 6;
+  }
+  y += 6;
 
   // Cover image: the favourite render if there is one, else the photo.
   const favorite = session.versions.find((v) => v.isFavorite) ?? session.versions[session.versions.length - 1];
@@ -170,7 +181,7 @@ export async function buildProjectPdf(session: SessionData): Promise<Blob> {
 
       doc.setFontSize(9);
       doc.setTextColor(MUTED);
-      for (const text of [row.config, `Where: ${row.where}`]) {
+      for (const text of [row.config, `Where: ${row.where}`, row.price && `Price: ${row.price}`].filter(Boolean) as string[]) {
         const lines = doc.splitTextToSize(text, contentW);
         doc.text(lines, PAGE.margin, py);
         py += lines.length * 4 + 1;
@@ -186,7 +197,7 @@ export async function buildProjectPdf(session: SessionData): Promise<Blob> {
     doc.setFontSize(8);
     doc.setTextColor(MUTED);
     doc.text(
-      `Window Depot  ·  ${customer?.name ?? ''}  ·  page ${i} of ${pages}`,
+      [`Window Depot`, customer?.name, rep.name, `page ${i} of ${pages}`].filter(Boolean).join('  ·  '),
       PAGE.margin,
       PAGE.h - 8,
     );
@@ -287,6 +298,7 @@ export function buildBrochurePdf(entry: {
 export function buildQuotePayload(session: SessionData) {
   return {
     exportedAt: new Date().toISOString(),
+    rep: activeSettings().rep,
     customer: session.customer && {
       name: session.customer.name,
       address: session.customer.address,
@@ -307,6 +319,7 @@ export function buildQuotePayload(session: SessionData) {
       color: s.color,
       configuration: s.config,
       where: s.where,
+      price: s.price,
     })),
     versions: session.versions.map((v) => ({
       name: v.name,

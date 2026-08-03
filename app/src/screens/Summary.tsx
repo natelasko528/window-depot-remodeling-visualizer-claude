@@ -139,7 +139,9 @@ export function Summary({ session, actions }: { session: SessionData; actions: A
                     <span style={{ width: 26, height: 26, border: '1px solid var(--color-neutral-400)', background: s.hex }} />
                     <span>
                       <span style={{ display: 'block', fontSize: 14.5 }}>{s.line} — {s.color}</span>
-                      <span style={{ display: 'block', fontSize: 12.5, color: 'var(--color-neutral-600)' }}>{s.cat} · {s.where}</span>
+                      <span style={{ display: 'block', fontSize: 12.5, color: 'var(--color-neutral-600)' }}>
+                        {[s.cat, s.where, s.price].filter(Boolean).join(' · ')}
+                      </span>
                     </span>
                   </div>
                 ))}

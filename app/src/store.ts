@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { PANEL } from './data';
 import { generateVisualization } from './api';
 import { blobToDataUrl, polygonMask } from './lib/image';
 import { buildReferences, referenceClause } from './lib/reference';
-import { MAX_REFERENCES } from './lib/limits';
+import { categoryNames, categorySpec } from './lib/catalog';
+import { activeSettings } from './lib/settings';
 import { getBlob } from './lib/db';
 import type { SessionActions, SessionData } from './session';
 import type { Detection } from './lib/types';
 
 export type Screen =
   | 'home' | 'customers' | 'photos' | 'areas'
-  | 'visualizer' | 'compare' | 'selections' | 'summary' | 'library';
+  | 'visualizer' | 'compare' | 'selections' | 'summary' | 'library' | 'settings';
 
 export type CompareMode = 'original' | 'slider' | 'side';
 
@@ -63,7 +63,7 @@ const INITIAL: State = {
  * if there is one, otherwise the catalogue default.
  */
 export function resolveSelection(session: SessionData, category: string) {
-  const spec = PANEL[category];
+  const spec = categorySpec(category);
   const saved = session.selections.find((s) => s.category === category);
   return {
     line: saved?.line || spec?.line || '',
@@ -104,12 +104,14 @@ export function coveredArea(detections: Detection[]): number {
 
 /** The sentence describing one category's change, naming where it applies. */
 export function instructionFor(session: SessionData, category: string, detections: Detection[]): string {
-  const spec = PANEL[category];
+  const spec = categorySpec(category);
   const { line, color } = resolveSelection(session, category);
-  const product = line.startsWith(spec.brand) ? line : `${spec.brand} ${line}`;
-  const detail = spec.options.map((o) => `${o.label}: ${o.value}`).join('; ');
+  const brand = spec?.brand ?? '';
+  const product = !brand || line.startsWith(brand) ? line : `${brand} ${line}`;
+  const detail = (spec?.options ?? []).map((o) => `${o.label}: ${o.value}`).join('; ');
   const places = detections.map((d) => d.label.toLowerCase()).join(' and ');
-  return `${category} on the ${places} — ${product} in ${color} (${detail}).`;
+  const suffix = detail ? ` (${detail})` : '';
+  return `${category} on the ${places} — ${product} in ${color}${suffix}.`;
 }
 
 /**
@@ -124,7 +126,7 @@ export function instructionFor(session: SessionData, category: string, detection
 export function planPasses(session: SessionData): RenderPass[] {
   const byCategory = new Map<string, Detection[]>();
   for (const detection of session.detections) {
-    if (!detection.selected || !PANEL[detection.category]) continue;
+    if (!detection.selected || !categorySpec(detection.category)) continue;
     if (!detection.polygon.length) continue;
     const list = byCategory.get(detection.category) ?? [];
     list.push(detection);
@@ -219,7 +221,7 @@ export function useVisualizer(session: SessionData, sessionActions: SessionActio
     }
 
     const all = planPasses(current);
-    let passes = only?.length ? all.filter((p) => only.includes(p.category)) : all;
+    const passes = only?.length ? all.filter((p) => only.includes(p.category)) : all;
     if (!passes.length) {
       flash('Confirm at least one area on the photo before rendering.');
       return;
@@ -228,10 +230,11 @@ export function useVisualizer(session: SessionData, sessionActions: SessionActio
     // Over budget, the categories covering the most of the photo keep their
     // reference. Every category still renders — the rest are described in words
     // alone rather than being dropped from the job.
+    const budget = activeSettings().render.maxReferences;
     let dropped: string[] = [];
-    if (passes.length > MAX_REFERENCES) {
+    if (passes.length > budget) {
       const ranked = [...passes].sort((a, b) => coveredArea(b.detections) - coveredArea(a.detections));
-      dropped = ranked.slice(MAX_REFERENCES).map((p) => p.category);
+      dropped = ranked.slice(budget).map((p) => p.category);
     }
 
     stopGeneration();
@@ -243,6 +246,16 @@ export function useVisualizer(session: SessionData, sessionActions: SessionActio
 
     const controller = new AbortController();
     abort.current = controller;
+
+    // A render that never returns leaves the rep watching a progress panel with
+    // the homeowner beside them. The client gives up on its own schedule rather
+    // than waiting on whatever the platform decides to do with a stalled
+    // function; a timeout is reported as one, not as a silent cancel.
+    const deadline = { hit: false };
+    const timer = setTimeout(() => {
+      deadline.hit = true;
+      controller.abort();
+    }, activeSettings().render.timeoutMs);
 
     try {
       const source = await getBlob(photo.storagePath);
@@ -295,10 +308,16 @@ export function useVisualizer(session: SessionData, sessionActions: SessionActio
           : `${versionName} saved to this project.`,
       );
     } catch (err) {
+      if (deadline.hit) {
+        patch({ generating: false, genStage: -1 });
+        flash('The render took too long and was stopped. Your selections are untouched.');
+        return;
+      }
       if (controller.signal.aborted) return;
       patch({ generating: false, genStage: -1 });
       flash(err instanceof Error ? err.message : 'The render failed.');
     } finally {
+      clearTimeout(timer);
       abort.current = undefined;
     }
   }, [flash, patch, sessionActions, stopGeneration]);
@@ -341,9 +360,11 @@ export function useVisualizer(session: SessionData, sessionActions: SessionActio
     },
   }), [moveSlider, patch]);
 
+  // Falls back to the first catalogue category rather than a hardcoded one, so
+  // deleting or renaming a category in settings cannot leave the panel blank.
   const activePanelKey = useMemo(() => {
     const key = state.panelTab;
-    return PANEL[key] ? key : 'Siding';
+    return categorySpec(key) ? key : categoryNames()[0] ?? '';
   }, [state.panelTab]);
 
   /**

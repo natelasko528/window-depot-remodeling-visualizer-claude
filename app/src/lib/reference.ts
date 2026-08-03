@@ -12,7 +12,8 @@
  * prefer a clean material crop over a marketing image with a watermark.
  */
 
-import { PANEL } from '../data';
+import { categorySpec } from './catalog';
+import { getBlob } from './db';
 import type { SessionData } from '../session';
 import { resolveSelection } from '../store';
 
@@ -66,12 +67,22 @@ export async function buildReferences(
   const references: MaterialReference[] = [];
 
   for (const category of categories) {
-    const spec = PANEL[category];
+    const spec = categorySpec(category);
     if (!spec) continue;
 
     const { line, color } = resolveSelection(session, category);
     const swatch = spec.colors.find((c) => c.name === color);
     const productLine = spec.lines.find((l) => l.name === line);
+
+    // An uploaded texture is stored on this tablet, so it works in a basement
+    // with no signal — try it before anything that needs the network.
+    if (swatch?.imagePath) {
+      const blob = await getBlob(swatch.imagePath);
+      if (blob) {
+        references.push({ category, source: 'catalogue', blob });
+        continue;
+      }
+    }
 
     // A colour-specific texture beats a generic product shot: the colour is
     // what the rep just chose, and the geometry is already in the photograph.
