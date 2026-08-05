@@ -16,11 +16,19 @@ export type DetectedSurface = {
   confidence: number | null;
 };
 
-export async function detectSurfaces(image: string, signal: AbortSignal): Promise<DetectedSurface[]> {
+/**
+ * `categories` is the catalogue's own key list, so detection can only ever
+ * return surfaces the app has products for.
+ */
+export async function detectSurfaces(
+  image: string,
+  categories: string[],
+  signal: AbortSignal,
+): Promise<DetectedSurface[]> {
   const res = await fetch('/api/detect', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ image }),
+    body: JSON.stringify({ image, categories }),
     signal,
   });
   const payload = await res.json().catch(() => null);
@@ -33,11 +41,12 @@ export async function generateVisualization(
   instructions: string[],
   signal: AbortSignal,
   mask?: string,
+  references?: string[],
 ): Promise<string> {
   const res = await fetch('/api/generate', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ image, instructions, mask }),
+    body: JSON.stringify({ image, instructions, mask, references }),
     signal,
   });
   const payload = await res.json().catch(() => null);

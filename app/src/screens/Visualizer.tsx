@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Canvas } from '../components/Canvas';
-import { GEN_STAGES, GRAIN, INK, PANEL, PAPER, STEEL } from '../data';
+import { GRAIN, INK, PAPER, STEEL } from '../data';
+import { useCatalog } from '../lib/catalog';
 import * as repo from '../lib/repo';
 import { resolveSelection } from '../store';
 import type { SessionActions, SessionData } from '../session';
@@ -22,7 +23,8 @@ export function Visualizer({
   const [fitSignal, setFitSignal] = useState(0);
   const [holding, setHolding] = useState(false);
 
-  const spec = PANEL[panelKey];
+  const { catalog } = useCatalog();
+  const spec = catalog.categories[panelKey];
   const photo = session.photos.find((p) => p.id === session.activePhotoId) ?? null;
   const before = photo ? session.urls[photo.storagePath] : null;
   const active = session.versions.find((v) => v.id === state.activeVersionId) ?? null;
@@ -34,14 +36,15 @@ export function Visualizer({
   // Hold-to-compare falls back to the render when there is no original loaded.
   const shown = holding ? before ?? after : after ?? before;
 
-  const revertArea = () => {
-    const area = confirmed.find((d) => d.category === panelKey) ?? confirmed[0];
-    if (!area) {
+  // Re-renders one category against a mask of only its own surfaces, leaving
+  // everything else in the photo untouched.
+  const rerenderCategory = () => {
+    const category = confirmed.some((d) => d.category === panelKey) ? panelKey : confirmed[0]?.category;
+    if (!category) {
       actions.flash('Confirm an area first.');
       return;
     }
-    void actions.runGen(active ? active.name : 'Option A', [area]);
-    actions.flash(`Re-rendering just the ${area.label.toLowerCase()}…`);
+    void actions.runGen(active ? active.name : 'Option A', [category]);
   };
 
   const report = () => {
@@ -53,7 +56,7 @@ export function Visualizer({
     { name: 'Fit', enabled: true, act: () => { setFitSignal((n) => n + 1); actions.flash('Reset to fit. Pinch to zoom, double-tap to toggle.'); } },
     { name: 'Undo', enabled: actions.canUndo(), act: actions.undo },
     { name: 'Redo', enabled: actions.canRedo(), act: actions.redo },
-    { name: 'Revert area', enabled: Boolean(active && confirmed.length), act: revertArea },
+    { name: `Re-render ${panelKey ? panelKey.split(',')[0].toLowerCase() : 'category'}`, enabled: Boolean(active && confirmed.length && !state.generating), act: rerenderCategory },
     { name: 'Report result', enabled: Boolean(active), act: report },
   ];
 
@@ -108,9 +111,11 @@ export function Visualizer({
               <div style={{ position: 'absolute', left: 0, right: 0, height: '30%', background: 'linear-gradient(to bottom, transparent, rgba(89,128,166,.28), transparent)', animation: 'wdSweep 2.4s linear infinite' }} />
               <div style={{ position: 'relative', width: 470, maxWidth: '82%', color: '#f2f2f3' }}>
                 <div style={{ fontSize: 11.5, letterSpacing: '.22em', textTransform: 'uppercase', opacity: .6 }}>Building the visualization</div>
-                <h3 style={{ color: '#f2f2f3', fontSize: 29, margin: '6px 0 18px' }}>{GEN_STAGES[Math.max(0, state.genStage)]}</h3>
+                <h3 style={{ color: '#f2f2f3', fontSize: 29, margin: '6px 0 18px' }}>
+                  {state.stages[Math.max(0, state.genStage)] ?? 'Preparing the photo'}
+                </h3>
                 <div style={{ display: 'grid', gap: 9 }}>
-                  {GEN_STAGES.map((label, i) => (
+                  {state.stages.map((label, i) => (
                     <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 14.5, opacity: i <= state.genStage ? 1 : 0.4 }}>
                       <span style={{ width: 18, height: 18, border: '1px solid rgba(242,242,243,.5)', display: 'grid', placeItems: 'center', fontSize: 11, background: i < state.genStage ? STEEL : 'transparent', color: PAPER }}>{i < state.genStage ? '✓' : ''}</span>
                       <span>{label}</span>
@@ -164,9 +169,9 @@ export function Visualizer({
       <aside style={{ borderLeft: '1px solid var(--color-divider)', background: 'var(--color-neutral-100)', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         <div style={{ flex: 'none', padding: '14px 18px', borderBottom: '1px solid var(--color-divider)' }}>
           <div style={{ fontSize: 11.5, letterSpacing: '.2em', textTransform: 'uppercase', color: 'var(--color-neutral-600)' }}>Editing</div>
-          <h3 style={{ margin: '2px 0 10px' }}>{spec.title}</h3>
+          <h3 style={{ margin: '2px 0 10px' }}>{spec?.title ?? 'No product categories'}</h3>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {[...new Set(confirmed.map((d) => d.category))].filter((c) => PANEL[c]).map((c) => (
+            {[...new Set(confirmed.map((d) => d.category))].filter((c) => catalog.categories[c]).map((c) => (
               <button
                 key={c}
                 onClick={() => actions.patch({ panelTab: c })}
@@ -184,12 +189,13 @@ export function Visualizer({
         <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px 18px 18px' }}>
           <div style={{ fontSize: 11.5, letterSpacing: '.2em', textTransform: 'uppercase', color: 'var(--color-neutral-600)', marginBottom: 8 }}>Product line</div>
           <div style={{ display: 'grid', gap: 8, marginBottom: 20 }}>
-            {spec.lines.map((l) => {
+            {(spec?.lines ?? []).map((l) => {
               const on = chosenLine === l.name;
               return (
                 <button
                   key={l.name}
                   onClick={() => actions.pickLine(panelKey, l.name)}
+                  aria-pressed={on}
                   style={{ display: 'flex', gap: 12, alignItems: 'center', textAlign: 'left', padding: '12px 14px', minHeight: 62, cursor: 'pointer', fontFamily: 'var(--font-body)', background: on ? '#fff' : 'transparent', border: `1px solid ${on ? STEEL : 'var(--color-divider)'}`, boxShadow: on ? '0 0 0 2px rgba(89,128,166,.3)' : 'none' }}
                 >
                   <span style={{ width: 22, height: 22, border: '1px solid var(--color-neutral-500)', display: 'grid', placeItems: 'center', fontSize: 12, background: on ? STEEL : 'transparent', color: on ? PAPER : 'var(--color-text)' }}>{on ? '✓' : ''}</span>
@@ -208,16 +214,18 @@ export function Visualizer({
             <div style={{ fontSize: 13, color: 'var(--color-neutral-700)' }}>{chosenColor}</div>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 18 }}>
-            {spec.colors.map((c) => {
+            {(spec?.colors ?? []).map((c) => {
               const on = chosenColor === c.name;
               return (
                 <button
                   key={c.name}
                   onClick={() => actions.pickColor(panelKey, c.name)}
+                  aria-pressed={on}
+                  aria-label={`${c.name} ${panelKey.toLowerCase()}`}
                   style={{ padding: 0, cursor: 'pointer', background: 'none', border: `1px solid ${on ? STEEL : 'var(--color-divider)'}`, boxShadow: on ? '0 0 0 2px rgba(89,128,166,.45)' : 'none', textAlign: 'left' }}
                 >
                   <span style={{ display: 'block', height: 62, background: c.hex, backgroundImage: GRAIN, position: 'relative' }}>
-                    <span style={{ position: 'absolute', right: 5, top: 5, fontSize: 12, color: '#1d1f20' }}>{on ? '✓' : ''}</span>
+                    <span aria-hidden="true" style={{ position: 'absolute', right: 5, top: 5, fontSize: 12, color: '#1d1f20' }}>{on ? '✓' : ''}</span>
                   </span>
                   <span style={{ display: 'block', padding: '6px 8px', fontSize: 12.5, fontFamily: 'var(--font-body)', lineHeight: 1.25 }}>{c.name}</span>
                 </button>
@@ -225,9 +233,9 @@ export function Visualizer({
             })}
           </div>
 
-          <div style={{ fontSize: 11.5, letterSpacing: '.2em', textTransform: 'uppercase', color: 'var(--color-neutral-600)', marginBottom: 8 }}>{spec.optionLabel}</div>
+          <div style={{ fontSize: 11.5, letterSpacing: '.2em', textTransform: 'uppercase', color: 'var(--color-neutral-600)', marginBottom: 8 }}>{spec?.optionLabel ?? 'Options'}</div>
           <div style={{ display: 'grid', gap: 8, marginBottom: 18 }}>
-            {spec.options.map((o) => (
+            {(spec?.options ?? []).map((o) => (
               <div key={o.label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '11px 14px', border: '1px solid var(--color-divider)', background: '#fff' }}>
                 <span style={{ fontSize: 14 }}>{o.label}</span>
                 <span style={{ fontFamily: 'var(--font-heading)', fontSize: 17, color: 'var(--color-accent-700)' }}>{o.value}</span>

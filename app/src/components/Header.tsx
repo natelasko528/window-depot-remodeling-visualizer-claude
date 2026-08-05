@@ -1,16 +1,17 @@
 import { PAPER, STEEL, STEP_LABELS } from '../data';
 import { useSyncStatus } from './SyncSheet';
 import { isConfigured } from '../lib/supabase';
+import { initials, useSettings } from '../lib/settings';
 import type { SessionData } from '../session';
 import type { Actions, Screen, State } from '../store';
 
 const STEP_INDEX: Partial<Record<Screen, number>> = {
-  customers: 0, setup: 1, photos: 1, areas: 2, visualizer: 3, compare: 3, selections: 4, summary: 4,
+  customers: 0, photos: 1, areas: 2, visualizer: 3, compare: 3, selections: 4, summary: 4,
 };
 
 const STEP_TARGET: Screen[] = ['customers', 'photos', 'areas', 'visualizer', 'selections'];
 
-const IN_PROJECT: Screen[] = ['customers', 'setup', 'photos', 'areas', 'visualizer', 'compare', 'selections', 'summary'];
+const IN_PROJECT: Screen[] = ['customers', 'photos', 'areas', 'visualizer', 'compare', 'selections', 'summary'];
 
 export function Header({
   state,
@@ -26,6 +27,10 @@ export function Header({
   const current = STEP_INDEX[state.screen];
   const wide = state.vw >= 1240;
   const sync = useSyncStatus();
+  const { settings } = useSettings();
+
+  const rep = settings.rep;
+  const repLine = [rep.market, rep.repId && `Rep ${rep.repId}`].filter(Boolean).join(' · ');
 
   const categories = [...new Set(session.detections.filter((d) => d.selected).map((d) => d.category))];
   const subtitle = [session.customer?.address, categories.join(', ')].filter(Boolean).join(' · ');
@@ -89,13 +94,20 @@ export function Header({
           <span style={{ width: 8, height: 8, borderRadius: '50%', background: !sync.online || sync.pending ? '#c9a227' : '#7fae7a' }} />
           <span>{syncLabel}</span>
         </button>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingLeft: 12, borderLeft: '1px solid rgba(242,242,243,.22)' }}>
-          <div style={{ width: 36, height: 36, border: '1px solid rgba(242,242,243,.35)', display: 'grid', placeItems: 'center', fontFamily: 'var(--font-heading)', fontSize: 14 }}>AR</div>
-          <div style={{ lineHeight: 1.2 }}>
-            <div style={{ fontSize: 13 }}>Alex Reyes</div>
-            <div style={{ fontSize: 11, opacity: .55 }}>Milwaukee · Rep 214</div>
-          </div>
-        </div>
+        <button
+          onClick={actions.go('settings')}
+          aria-label="Settings"
+          title="Settings"
+          style={{ display: 'flex', alignItems: 'center', gap: 10, paddingLeft: 12, marginLeft: 0, height: 44, background: 'none', border: 0, borderLeft: '1px solid rgba(242,242,243,.22)', color: '#f2f2f3', cursor: 'pointer', fontFamily: 'var(--font-body)', textAlign: 'left' }}
+        >
+          <span style={{ width: 36, height: 36, flex: 'none', border: '1px solid rgba(242,242,243,.35)', display: 'grid', placeItems: 'center', fontFamily: 'var(--font-heading)', fontSize: 14 }}>
+            {initials(rep.name)}
+          </span>
+          <span style={{ lineHeight: 1.2, display: wide ? 'block' : 'none' }}>
+            <span style={{ display: 'block', fontSize: 13 }}>{rep.name || 'Set up this tablet'}</span>
+            <span style={{ display: 'block', fontSize: 11, opacity: .55 }}>{repLine || 'Settings'}</span>
+          </span>
+        </button>
       </div>
     </header>
   );

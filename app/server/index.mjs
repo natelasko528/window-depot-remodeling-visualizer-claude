@@ -4,6 +4,7 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generateHandler } from './generate.mjs';
 import { detectHandler } from './detect.mjs';
+import { settingsHandler } from './settings.mjs';
 
 const DIST = fileURLToPath(new URL('../dist/', import.meta.url));
 const PORT = Number(process.env.PORT) || 4173;
@@ -34,6 +35,10 @@ createServer(async (req, res) => {
   }
   if (url.pathname === '/api/detect') {
     await detectHandler(req, res);
+    return;
+  }
+  if (url.pathname === '/api/settings') {
+    await settingsHandler(req, res);
     return;
   }
   const requested = normalize(join(DIST, decodeURIComponent(url.pathname)));

@@ -48,7 +48,7 @@ export function Selections({ session, actions }: { session: SessionData; actions
           <table className="table" style={{ width: '100%', fontSize: 14.5 }}>
             <thead>
               <tr>
-                {['Category', 'Product line', 'Configuration', 'Color / finish', 'Where', 'Version'].map((h) => (
+                {['Category', 'Product line', 'Configuration', 'Color / finish', 'Price', 'Where', 'Version'].map((h) => (
                   <th key={h} style={{ textAlign: 'left', padding: '10px 12px' }}>{h}</th>
                 ))}
                 <th style={{ textAlign: 'right', padding: '10px 12px' }} />
@@ -66,6 +66,7 @@ export function Selections({ session, actions }: { session: SessionData; actions
                       <span>{s.color}</span>
                     </span>
                   </td>
+                  <td style={{ padding: '14px 12px', whiteSpace: 'nowrap' }}>{s.price || '—'}</td>
                   <td style={{ padding: '14px 12px', color: 'var(--color-neutral-700)' }}>{s.where}</td>
                   <td style={{ padding: '14px 12px' }}><span className="tag tag-accent" style={{ fontSize: 11 }}>{s.version}</span></td>
                   <td style={{ padding: '14px 12px', textAlign: 'right' }}>

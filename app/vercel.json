@@ -11,6 +11,10 @@
     "api/detect.mjs": {
       "maxDuration": 60,
       "memory": 1024
+    },
+    "api/settings.mjs": {
+      "maxDuration": 15,
+      "memory": 256
     }
   },
   "env": {

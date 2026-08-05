@@ -7,12 +7,64 @@ try {
 const OPENAI_URL = 'https://api.openai.com/v1/images/edits';
 const MAX_BODY_BYTES = 25 * 1024 * 1024;
 
-function composePrompt(instructions) {
+/**
+ * The images API accepts up to 10 images per edit and applies the mask to the
+ * first, so the photograph takes one slot and material references get the rest.
+ */
+export const MAX_IMAGES = 10;
+export const MAX_REFERENCES = MAX_IMAGES - 1;
+
+/** The output sizes gpt-image-1 supports. Mirrors RENDER_SIZES in lib/image.ts. */
+const RENDER_SIZES = [
+  { width: 1024, height: 1024 },
+  { width: 1536, height: 1024 },
+  { width: 1024, height: 1536 },
+];
+
+/**
+ * The supported size closest to the photograph's own aspect ratio.
+ *
+ * Asking for a fixed size regardless of the photo is how a portrait elevation
+ * comes back re-framed as a landscape one: the result then no longer lines up
+ * with the original in the before/after slider, and a second masked pass over
+ * it lands on the wrong pixels. Photos are already normalised to one of these
+ * sizes at capture, so in practice this reads the answer back off the photo.
+ */
+export function sizeForPhoto(dimensions) {
+  if (!dimensions?.width || !dimensions?.height) return null;
+  const aspect = dimensions.width / dimensions.height;
+  const best = RENDER_SIZES.reduce((a, b) => (
+    Math.abs(b.width / b.height - aspect) < Math.abs(a.width / a.height - aspect) ? b : a
+  ), RENDER_SIZES[0]);
+  return `${best.width}x${best.height}`;
+}
+
+/**
+ * Instruction lines arrive already naming their reference by ordinal ("…as
+ * shown in reference image 2"), because the client is what decides the order
+ * references are attached in.
+ */
+function composePrompt(instructions, { masked = false, references = 0 } = {}) {
   return [
     'This is a photograph of a real house taken during a home-improvement sales appointment.',
     'Re-render the photograph with these product changes applied:',
     ...instructions.map((line) => `- ${line}`),
     '',
+    ...(references
+      ? [
+        `The first image is the photograph. The ${references === 1 ? 'image' : `${references} images`} after it ${references === 1 ? 'is a material reference' : 'are material references'}, not part of the scene.`,
+        'Use them only for colour, texture, sheen and finish.',
+        'Do not copy their shape, framing, edges or background into the photograph, and do not place them anywhere in the scene.',
+        '',
+      ]
+      : []),
+    ...(masked
+      ? [
+        'Only the transparent region of the mask may change. Every pixel outside it must stay exactly as it is.',
+        'Blend the new material into the surrounding pixels at the edges of that region so no seam is visible.',
+        '',
+      ]
+      : []),
     'Keep the camera angle, framing, perspective, lens distortion and resolution identical to the source photograph.',
     'Keep the time of day, sun direction, shadow length and colour temperature identical.',
     'Do not change the landscaping, sky, deck, furniture, neighbouring structures, or anything not named above.',
@@ -55,6 +107,35 @@ function decodeDataUrl(dataUrl) {
 }
 
 /**
+ * Reads width/height straight from the PNG IHDR chunk, and from the JPEG SOFn
+ * marker. Enough to reject a mismatched mask before spending a slow, billable
+ * API call on a request the image API would reject with an opaque 400.
+ */
+export function imageSize(buffer, mime) {
+  if (mime === 'image/png') {
+    // 8-byte signature, then a length+type header; IHDR's payload starts at 16.
+    if (buffer.length < 24 || buffer.readUInt32BE(12) !== 0x49484452) return null;
+    return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20) };
+  }
+
+  if (mime === 'image/jpeg') {
+    let offset = 2;
+    while (offset + 9 < buffer.length) {
+      if (buffer[offset] !== 0xff) return null;
+      const marker = buffer[offset + 1];
+      const length = buffer.readUInt16BE(offset + 2);
+      // SOF0-SOF15, excluding the non-frame markers DHT/JPG/DAC.
+      if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+        return { height: buffer.readUInt16BE(offset + 5), width: buffer.readUInt16BE(offset + 7) };
+      }
+      offset += 2 + length;
+    }
+  }
+
+  return null;
+}
+
+/**
  * Core generation step, transport-agnostic so it can be driven by both the
  * Node server (`server/index.mjs`, the Vite dev plugin) and the Vercel
  * serverless function in `api/generate.mjs`.
@@ -75,17 +156,75 @@ export async function generateFromPayload(payload) {
     return { status: 400, body: { error: 'Expected at least one product change in `instructions`.' } };
   }
 
+  const imageDims = imageSize(image.buffer, image.mime);
+
+  // The mask confines the edit to one set of surfaces. Optional: without it the
+  // whole photograph is offered to the model and the prompt alone constrains it.
+  let mask = null;
+  if (payload.mask !== undefined && payload.mask !== null) {
+    mask = decodeDataUrl(payload.mask);
+    if (!mask || mask.mime !== 'image/png') {
+      return { status: 400, body: { error: 'Expected `mask` as a base64 PNG data URL.' } };
+    }
+
+    const maskDims = imageSize(mask.buffer, mask.mime);
+    if (imageDims && maskDims && (imageDims.width !== maskDims.width || imageDims.height !== maskDims.height)) {
+      return {
+        status: 400,
+        body: {
+          error: `The mask is ${maskDims.width}×${maskDims.height} but the photo is ${imageDims.width}×${imageDims.height}. They must match.`,
+        },
+      };
+    }
+  }
+
+  // Material references — one per product category, in the order the prompt
+  // refers to them. Capped here rather than trusted from the client, so an
+  // over-budget request fails loudly instead of being silently truncated into
+  // a render whose prompt cites references that were never sent.
+  const references = [];
+  if (payload.references !== undefined && payload.references !== null) {
+    if (!Array.isArray(payload.references)) {
+      return { status: 400, body: { error: 'Expected `references` to be an array of base64 image data URLs.' } };
+    }
+    if (payload.references.length > MAX_REFERENCES) {
+      return {
+        status: 400,
+        body: { error: `Too many references: ${payload.references.length}. The image API allows ${MAX_IMAGES} images per edit, so at most ${MAX_REFERENCES} alongside the photo.` },
+      };
+    }
+    for (const [index, entry] of payload.references.entries()) {
+      const decoded = decodeDataUrl(entry);
+      if (!decoded) {
+        return { status: 400, body: { error: `Reference ${index + 1} is not a base64 PNG, JPEG or WebP data URL.` } };
+      }
+      references.push(decoded);
+    }
+  }
+
   const key = process.env.OPENAI_API_KEY;
   if (!key) {
     return { status: 503, body: { error: 'No OPENAI_API_KEY configured on the server.' } };
   }
 
+  const filenameFor = (mime, stem) => `${stem}.${mime === 'image/jpeg' ? 'jpg' : mime.slice(6)}`;
+
   const form = new FormData();
   form.append('model', process.env.OPENAI_IMAGE_MODEL || 'gpt-image-1');
-  form.append('prompt', composePrompt(instructions));
-  form.append('size', process.env.OPENAI_IMAGE_SIZE || '1536x1024');
+  form.append('prompt', composePrompt(instructions, { masked: Boolean(mask), references: references.length }));
+  form.append('size', sizeForPhoto(imageDims) || process.env.OPENAI_IMAGE_SIZE || '1536x1024');
   form.append('n', '1');
-  form.append('image', new Blob([image.buffer], { type: image.mime }), `photo.${image.mime === 'image/jpeg' ? 'jpg' : image.mime.slice(6)}`);
+
+  // Repeated `image[]` fields are the documented multi-image shape. The
+  // photograph must go first: the mask applies to the first image only.
+  form.append('image[]', new Blob([image.buffer], { type: image.mime }), filenameFor(image.mime, 'photo'));
+  for (const [index, reference] of references.entries()) {
+    form.append('image[]', new Blob([reference.buffer], { type: reference.mime }), filenameFor(reference.mime, `reference-${index + 1}`));
+  }
+
+  if (mask) {
+    form.append('mask', new Blob([mask.buffer], { type: mask.mime }), 'mask.png');
+  }
 
   // Give up just before the platform would kill us, so the client gets a JSON
   // error it can render instead of an opaque gateway timeout. GENERATE_TIMEOUT_MS
